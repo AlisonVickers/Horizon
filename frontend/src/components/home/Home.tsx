@@ -135,7 +135,6 @@ export function Home() {
               <p className="eyebrow">Coming up</p>
               <h2>Upcoming expenses</h2>
             </div>
-            <button className="text-button" type="button">View all <span>→</span></button>
           </div>
           <div className="expense-list">
             {displayedExpenses.length === 0 && <p className="muted-copy">No standing orders detected for this account.</p>}

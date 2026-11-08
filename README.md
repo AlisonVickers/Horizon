@@ -35,6 +35,31 @@ not establish affordability. Gemini is optional; when unavailable, Astro uses
 the engine's supported answers and explicitly says when it cannot answer.
 The response's `data.gemini_status` and `tool_trace` show which steps were used.
 
+Astro also supports individual job-loss and repair scenarios. For an EI table
+estimate, ask about EI and give the number of insurable hours in the qualifying
+period. The assistant looks up the account's district in `data/parquet/` and
+consults `data/external/ei_regular_benefits.csv`: the benefit rate, weekly cap
+and weeks-payable table. It rounds the district unemployment rate to one
+decimal for the table lookup and converts monthly income to weekly earnings for
+an approximate, capped, pre-tax benefit. Income in the dataset is not verified
+insurable earnings. If hours are not supplied, Astro reports the range of
+positive table durations conditional on eligibility, rather than inventing the
+hours. If a matching table row is unavailable, Astro reports the error.
+
+**The district data is historical 2023 data from Czech districts, not Canadian
+EI regions.** Its unemployment rate is used only as a demonstration proxy with
+the locally supplied 2026 EI rules, not as a current regional rate or actual
+eligibility determination. EI caps and rules may change, and eligibility,
+earnings, taxes, delays and the period after benefits end are not verified.
+For an explicitly hypothetical scenario, you can instead supply a percentage
+and duration, such as “EI pays 55% for 6 months”; that calculation uses the
+stated assumption without applying the EI cap and labels the distinction.
+
+For repairs, provide a cost in dollars or say it costs one month of typical
+spending. Estimates use historical income, spending and average balance and
+assume steady monthly cash flow; they are not live balances or guarantees. For
+now, ask about combined shocks separately.
+
 Shock names: `job_loss_ei` (EI income share as a percentage), `rent_up_pct` (household bills increase percentage), `pay_cut_pct` (income reduction percentage), `one_off_costs`, `new_car_payment`, `loan_payment_reduction`, `everyday_cut_pct`.
 
 ## Developing the frontend
