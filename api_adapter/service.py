@@ -17,10 +17,10 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.domain.runway import RunwayCalculator  # noqa: E402
 from app.services.cashflow_forecast import CashflowForecastService  # noqa: E402
-from app.services.dashboard_service import DashboardService # noqa: E402
-from app.services.expense_detector import ExpenseDetector # noqa: E402
-from app.services.income_detector import IncomeDetector # noqa: E402
-from app.services.scenario_simulator import ScenarioSimulatorService # noqa: E402
+from app.services.dashboard_service import DashboardService  # noqa: E402
+from app.services.expense_detector import ExpenseDetector  # noqa: E402
+from app.services.income_detector import IncomeDetector  # noqa: E402
+from app.services.scenario_simulator import ScenarioSimulatorService  # noqa: E402
 
 FIXED_COLUMNS = ("household_bills", "insurance", "loan_payments")
 EVERYDAY_COLUMNS = ("cash_withdrawals_genuine", "card_withdrawals", "transfers_out_other")
@@ -52,20 +52,12 @@ def _label(value: Any, fallback: str) -> str:
 
 
 class AdapterAccountService:
-    """Translate frontend requests into account numbers the judges can verify.
-
-    Profile numbers follow the challenge formulas exactly:
-    I = median money_in, F = median(bills + insurance + loan), S = median money_out,
-    B = mean avg_daily_balance over the last 6 months, H = median household_bills,
-    P = loan monthly_payment when the loan status is C or D.
-    """
 
     def __init__(self, data_dir: str | Path) -> None:
         self.data_dir = Path(data_dir)
         self._budget_requests: dict[int, list[str]] = {}
         self.scenario_simulator = ScenarioSimulatorService()
 
-    # ------------------------------------------------------------------ data
     @cached_property
     def _accounts(self) -> pd.DataFrame:
         for candidate in (self.data_dir / "accounts.parquet", self.data_dir.parent / "raw" / "data" / "accounts.csv"):
@@ -100,7 +92,6 @@ class AdapterAccountService:
         peers["buffer"] = grouped["avg_daily_balance"].apply(lambda values: values.tail(6).mean())
         return peers
 
-    # --------------------------------------------------------------- profile
     def profile(self, tables: dict[str, pd.DataFrame]) -> dict[str, float]:
         summary = tables["monthly_summary"].sort_values("month")
         loans = tables["loans"]
@@ -142,7 +133,6 @@ class AdapterAccountService:
             })
         return output
 
-    # -------------------------------------------------------------- timeline
     def timeline(self, transactions: pd.DataFrame) -> dict[str, Any]:
         current = transactions["date"].max().date()
         credits = transactions[
@@ -155,7 +145,6 @@ class AdapterAccountService:
         next_payday = _add_month(payday)
         while next_payday <= current:
             next_payday = _add_month(next_payday)
-        # Heena's income detector: if it finds a recurring income, use its forecast date.
         income_patterns = IncomeDetector().detect(transactions)
         pay_period_frequency = income_patterns[0].frequency if income_patterns else "monthly"
         if income_patterns:
@@ -204,10 +193,9 @@ class AdapterAccountService:
         }
 
     def _standing_orders(self, tables: dict[str, pd.DataFrame], current: date) -> list[dict[str, Any]]:
-        """Upcoming bills from Heena's ExpenseDetector + CashflowForecastService (next 45 days)."""
         patterns = [
             pattern for pattern in ExpenseDetector().detect(tables["transactions"])
-            if pattern.typical_amount >= 20  # hide tiny statement fees from the bill list
+            if pattern.typical_amount >= 20
         ]
         events = CashflowForecastService().forecast(
             [], patterns, current + timedelta(days=1), current + timedelta(days=45))
@@ -223,7 +211,7 @@ class AdapterAccountService:
                 "due_date": event.date.isoformat(),
                 "key": event.source_key,
             })
-        if not output:  # fall back to the bank's standing-order table
+        if not output:
             for _, order in tables["standing_orders"].sort_values("amount", ascending=False).iterrows():
                 output.append({
                     "name": _label(order["purpose"], "Standing order").capitalize(),
@@ -232,7 +220,6 @@ class AdapterAccountService:
                 })
         return sorted(output, key=lambda row: (row["due_date"] or "9999", -row["amount"]))
 
-    # ------------------------------------------------------------- endpoints
     def home(self, account_id: int) -> dict[str, Any]:
         tables = self._load(account_id)
         transactions = tables["transactions"].sort_values(["date", "transaction_id"], ascending=False)
@@ -248,6 +235,10 @@ class AdapterAccountService:
             **timeline,
             "summary_month": str(summary["month"]),
             "balance": float(summary["month_end_balance"]),
+            "balance_history": [
+                {"month": str(row["month"]), "balance": float(row["month_end_balance"])}
+                for _, row in tables["monthly_summary"].sort_values("month").tail(12).iterrows()
+            ],
             "profile": profile,
             "latest_month": {
                 "income": float(summary["money_in"]),
@@ -267,6 +258,7 @@ class AdapterAccountService:
                 "rationale": "Six months of your typical spending, so a job loss on EI does not empty the account.",
             },
             "benchmarks": self.benchmarks(account_id, profile),
+            "baseline_runway": RunwayCalculator.calculate(max(profile["buffer"], 0.0), 0.0, profile["spending"], profile["income"]).runway_months,
             "standing_orders": orders,
             "recent_transactions": [
                 {
@@ -344,7 +336,6 @@ class AdapterAccountService:
         everyday_limit = round(profile["everyday_spending"] * 0.9, -1)
         fixed_now = float(sum(latest[column] for column in FIXED_COLUMNS))
         leftover = profile["income"] - profile["fixed_costs"] - everyday_limit
-        # Half of what is left after bills; if nothing is left, a starter goal of 5% of income.
         save_target = max(round(max(leftover, 0) * 0.5, -1), round(profile["income"] * 0.05, -1))
         saved_now = max(float(latest["money_in"] - latest["money_out"]), 0.0)
         return [
@@ -385,60 +376,37 @@ class AdapterAccountService:
                 {"name": CATEGORY_LABELS[name], "amount": float(summary[name])}
                 for name in CATEGORY_LABELS if float(summary[name]) > 0
             ],
-            "goals": self._budget_plan(tables) if self._budget_requests.get(account_id) else [],
+            "goals": self._budget_plan(tables),
         }
+
+    @staticmethod
+    def _apply_shocks(profile: dict[str, float], shocks: list[dict[str, float]]) -> tuple[float, float, float]:
+        income, spending, one_off = profile["income"], profile["spending"], 0.0
+        for shock in shocks:
+            name, value = shock["name"], float(shock["value"])
+            if name == "job_loss_ei":
+                income *= max(0.0, 1.0 - value)
+            elif name == "pay_cut_pct":
+                income *= max(0.0, 1.0 - value)
+            elif name == "rent_up_pct":
+                spending += profile["household_bills"] * value
+            elif name == "one_off_costs":
+                one_off += value
+            elif name == "loan_payment_reduction":
+                spending = max(0.0, spending - (profile["loan_payment"] if value <= 1 else value))
+            elif name == "new_car_payment":
+                spending += value
+            elif name == "everyday_cut_pct":
+                spending = max(0.0, spending - profile["everyday_spending"] * value)
+            else:
+                raise ValueError(f"Unsupported scenario shock: {name}")
+        return income, spending, one_off
 
     def scenario(self, account_id: int, shocks: list[dict[str, float]]) -> dict[str, Any]:
         tables = self._load(account_id)
         profile = self.profile(tables)
-        latest_month = str(
-            tables["monthly_summary"].sort_values("month").iloc[-1]["month"]
-        )
-        year, month = (int(part) for part in latest_month.split("-")[:2])
-        start_date = date(year, month, monthrange(year, month)[1]) + timedelta(days=1)
-        end_date = _add_month(start_date, 3) - timedelta(days=1)
-        dashboard = DashboardService().get_dashboard(
-            account_id=account_id,
-            start_date=start_date,
-            end_date=end_date,
-        )
-        if (
-            dashboard["projected_balance"] is None
-            or dashboard["variable_spending"]["status"] != "estimated"
-        ):
-            raise ValueError("Scenario projection is unavailable for this account")
-
-        events = [
-            {
-                "date": event["date"],
-                "amount": event["amount"],
-                "event_type": event["event_type"],
-                "category": event["category"],
-            }
-            for event in dashboard["events"]
-        ]
-        simulated = self.scenario_simulator.simulate_shocks(
-            starting_balance=dashboard["balance"]["historical_month_end_balance"],
-            events=events,
-            start_date=start_date,
-            end_date=end_date,
-            monthly_variable_outflow=dashboard["variable_spending"]["conservative_monthly_estimate"],
-            shocks=shocks,
-        )
-        months = max((end_date - start_date).days / 30.44, 1)
-        income = sum(
-            event["amount"] for event in simulated["scenario_events"]
-            if event["amount"] > 0
-        ) / months
-        spending = (
-            sum(
-                -event["amount"] for event in simulated["scenario_events"]
-                if event["amount"] < 0
-            ) / months
-            + simulated["monthly_variable_outflow"]
-        )
-        buffer = dashboard["balance"]["historical_month_end_balance"]
-        one_off = simulated["one_off_costs"]
+        income, spending, one_off = self._apply_shocks(profile, shocks)
+        buffer = profile["buffer"]
         result = RunwayCalculator.calculate(max(buffer, 0.0), one_off, spending, income)
         timeline = self.timeline(tables["transactions"])
         return {
@@ -449,6 +417,63 @@ class AdapterAccountService:
             "one_off_costs": one_off, "income_after_shock": income,
             "spending_after_shock": spending, "gap": result.gap, "runway": result.runway_months,
             "profile": profile,
+        }
+
+    def plans(self, account_id: int) -> dict[str, Any]:
+        tables = self._load(account_id)
+        profile = self.profile(tables)
+        budget = self._budget_plan(tables)
+        target = round(profile["spending"] * 6, -2)
+        monthly_save = budget[2]["monthly_limit"]
+        missing = max(target - profile["buffer"], 0.0)
+        months_to_goal = (missing / monthly_save) if monthly_save > 0 else None
+
+        def runway(shocks: list[dict[str, float]]) -> float:
+            income, spending, one_off = self._apply_shocks(profile, shocks)
+            return RunwayCalculator.calculate(max(profile["buffer"], 0.0), one_off, spending, income).runway_months
+
+        base_shock = [{"name": "job_loss_ei", "value": 0.45}]
+        base = runway(base_shock)
+        actions = []
+        candidates = [
+            ("Cut everyday spending 10%", [{"name": "everyday_cut_pct", "value": 0.1}],
+             f"Saves about ${profile['everyday_spending'] * 0.1:,.0f}/month on cash and card spending."),
+            ("Cut everyday spending 25%", [{"name": "everyday_cut_pct", "value": 0.25}],
+             f"Saves about ${profile['everyday_spending'] * 0.25:,.0f}/month. Harder, but buys real time."),
+        ]
+        if profile["loan_payment"] > 0:
+            candidates.insert(0, ("Ask the bank to pause the loan", [{"name": "loan_payment_reduction", "value": 1}],
+                                  f"Frees ${profile['loan_payment']:,.0f}/month while you look for work."))
+        for title, extra, detail in candidates:
+            months = runway(base_shock + extra)
+            actions.append({"title": title, "detail": detail, "runway_months": months,
+                            "months_gained": months - base, "_shocks": extra})
+        actions.sort(key=lambda action: action["months_gained"], reverse=True)
+        all_shocks = base_shock + [shock for action in actions[:2] for shock in action["_shocks"]]
+        for action in actions:
+            action.pop("_shocks")
+        return {
+            "account_id": account_id,
+            "profile": profile,
+            "goal_plan": {
+                "name": "6-month safety net",
+                "target": target,
+                "current": profile["buffer"],
+                "progress_pct": min(profile["buffer"] / target * 100, 100) if target else 0,
+                "monthly_saving": monthly_save,
+                "months_to_goal": months_to_goal,
+                "steps": [
+                    f"Keep everyday spending under ${budget[0]['monthly_limit']:,.0f}/month.",
+                    f"Move ${monthly_save:,.0f} to savings each payday.",
+                    "Protect bills and the loan first; they are paid before anything else.",
+                ],
+            },
+            "backup_plan": {
+                "trigger": "Job loss, EI pays 55% of income",
+                "runway_without_actions": base,
+                "runway_with_top_actions": runway(all_shocks),
+                "actions": actions,
+            },
         }
 
     def assistant(self, account_id: int, prompt: str) -> dict[str, Any]:
@@ -483,7 +508,6 @@ class AdapterAccountService:
 
     @staticmethod
     def _ask_gemini(prompt: str, profile: dict[str, float], engine_answer: str) -> str | None:
-        """Astro's voice via Gemini. Numbers come only from the engine; Gemini just explains them."""
         key = os.environ.get("GEMINI_API_KEY")
         if not key:
             return None
@@ -513,6 +537,6 @@ class AdapterAccountService:
             parts = response.json()["candidates"][0]["content"]["parts"]
             text = "".join(part.get("text", "") for part in parts).strip()
             return text or None
-        except Exception as error:  # fall back to the engine's own answer
+        except Exception as error:
             print(f"[Astro] Gemini call failed: {error}", flush=True)
             return None

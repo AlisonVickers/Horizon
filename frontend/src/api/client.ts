@@ -40,6 +40,8 @@ export type HomeResponse = {
   overspent_since_payday: number
   profile: Profile
   benchmarks: Benchmark[]
+  baseline_runway: number
+  balance_history: Array<{ month: string; balance: number }>
   summary_month: string
   balance: number
   latest_month: {
@@ -196,8 +198,31 @@ export function askAssistant(accountId: number, prompt: string) {
   })
 }
 
-/** Heena's dashboard: projects the balance forward from the last month-end using detected recurring events. */
 export function getDashboard(accountId: number, startDate: string, endDate: string, safetyBuffer = 500) {
   const query = new URLSearchParams({ start_date: startDate, end_date: endDate, safety_buffer: String(safetyBuffer) })
   return request<DashboardResponse>(`/api/accounts/${accountId}/dashboard?${query}`)
+}
+
+export type PlansResponse = {
+  account_id: number
+  profile: Profile
+  goal_plan: {
+    name: string
+    target: number
+    current: number
+    progress_pct: number
+    monthly_saving: number
+    months_to_goal: number | null
+    steps: string[]
+  }
+  backup_plan: {
+    trigger: string
+    runway_without_actions: number
+    runway_with_top_actions: number
+    actions: Array<{ title: string; detail: string; runway_months: number; months_gained: number }>
+  }
+}
+
+export function getPlans(accountId: number) {
+  return request<PlansResponse>(`/accounts/${accountId}/plans`)
 }

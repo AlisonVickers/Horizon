@@ -41,10 +41,10 @@ export function Budget() {
     <main className="dashboard-main budget-main">
       <section className="page-heading budget-heading">
         <div>
-          <p className="eyebrow">Detected from your activity</p>
+          <p className="eyebrow">Your budget</p>
           <h1>Budget</h1>
           <p className="welcome-copy">
-            Budgets are created only when you ask Astro. Astro reads your banking activity and calculates an affordable plan.
+            A monthly plan based on your recent spending.
           </p>
           <form className="chat-input" onSubmit={createBudget}>
             <span className="astro-icon" aria-hidden="true">✦</span>
@@ -53,7 +53,7 @@ export function Budget() {
           </form>
           {assistantMessage && <p className="assistant-reply"><span className="astro-icon" aria-hidden="true">✦</span>{assistantMessage}</p>}
           {assistantError && <p className="data-status data-error">{assistantError}</p>}
-          {loading && <p className="data-status">Syncing detected budgets…</p>}
+          {loading && <p className="data-status">Loading budgets…</p>}
           {error && <p className="data-status data-error">Showing the saved budget view. {error}</p>}
         </div>
         <div className="period-progress">
@@ -75,7 +75,7 @@ export function Budget() {
 
       <section className="budget-footer insight-box">
         <span className="astro-icon" aria-hidden="true">✦</span>
-        <p>Astro watches your pace automatically. If your activity changes, these budgets adjust with it—there is nothing to update.</p>
+        <p>Budgets update automatically as your spending changes.</p>
       </section>
     </main>
   )

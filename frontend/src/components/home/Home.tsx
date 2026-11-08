@@ -4,6 +4,7 @@ import { askAssistant } from '../../api/client'
 import { ACCOUNT_ID } from '../../config'
 import { NextPaydayCard } from './NextPaydayCard'
 import { BalanceOutlookCard } from './BalanceOutlookCard'
+import { CustomerSnapshot } from './CustomerSnapshot'
 import { getHome } from '../../api/client'
 import type { HomeResponse } from '../../api/client'
 import { useAccountData } from '../../hooks/useAccountData'
@@ -90,11 +91,11 @@ export function Home() {
         <div>
           <h1>Hello! Today is {formattedCurrentDate}</h1>
           <p className="welcome-copy">
-            Everything here is detected from your bank activity. There is nothing to enter.
+            Here's where your money stands today.
           </p>
         </div>
         <form className="chat-input" onSubmit={submitPrompt}>
-          <span className="astro-icon" aria-hidden="true">✦</span>
+          <img className="astro-avatar" src="/assets/astro-avatar.svg" alt="" aria-hidden="true" />
           <input
             aria-label="Ask Astro anything"
             onChange={(event) => setPrompt(event.target.value)}
@@ -103,12 +104,14 @@ export function Home() {
           />
           <button className="send-arrow" disabled={assistantLoading} type="submit" aria-label="Send question">↗</button>
         </form>
-        {assistantLoading && <p className="data-status">Astro is checking your detected activity…</p>}
+        {assistantLoading && <p className="data-status">Astro is thinking…</p>}
         {assistantMessage && <p className="assistant-reply"><span className="astro-icon" aria-hidden="true">✦</span>{assistantMessage}</p>}
         {assistantError && <p className="data-status data-error">Astro could not answer right now. {assistantError}</p>}
-        {loading && <p className="data-status">Syncing detected account activity…</p>}
+        {loading && <p className="data-status">Loading your account…</p>}
         {error && <p className="data-status data-error">Showing the latest saved view. {error}</p>}
       </section>
+
+      {data && <CustomerSnapshot profile={data.profile} runway={data.baseline_runway} />}
 
       <div className="dashboard-grid">
         <NextPaydayCard
@@ -151,7 +154,7 @@ export function Home() {
           </div>
         </article>
 
-        <BalanceOutlookCard asOf={data?.current_date ?? null} />
+        <BalanceOutlookCard asOf={data?.current_date ?? null} history={data?.balance_history ?? []} />
 
         <article className="card glance-card">
           <div className="card-heading">
@@ -195,7 +198,7 @@ export function Home() {
           ) : (
             <div className="insight-box">
               <span className="astro-icon" aria-hidden="true">✦</span>
-              <p>Ask Astro to help you create a goal from your banking activity.</p>
+              <p>Ask Astro to help you set a savings goal.</p>
             </div>
           )}
         </article>
@@ -214,7 +217,7 @@ export function Home() {
                 </strong>
               </div>
             ))}
-            {!data?.benchmarks?.length && <p className="muted-copy">Loading comparisons with all other customers…</p>}
+            {!data?.benchmarks?.length && <p className="muted-copy">Loading comparisons…</p>}
           </div>
         </article>
       </div>

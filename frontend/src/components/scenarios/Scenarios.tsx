@@ -46,17 +46,16 @@ export function Scenarios() {
 
   useEffect(() => {
     let active = true
-    // Clear the previous request error before starting the new calculation.
     // eslint-disable-next-line react/set-state-in-effect
     setScenarioError(null)
     const shocks = selectedScenarios.flatMap((selectedScenario) => {
       switch (selectedScenario) {
         case 'job-loss':
-          return [{ name: 'job_loss_ei', value: eiShare }]
+          return [{ name: 'job_loss_ei', value: 1 - eiShare / 100 }]
         case 'rent-increase':
-          return [{ name: 'rent_up_pct', value: rentIncrease }]
+          return [{ name: 'rent_up_pct', value: rentIncrease / 100 }]
         case 'pay-cut':
-          return [{ name: 'pay_cut_pct', value: payCut }]
+          return [{ name: 'pay_cut_pct', value: payCut / 100 }]
         case 'new-car':
           return [{ name: 'new_car_payment', value: carPayment }]
         case 'surprise':
@@ -87,7 +86,7 @@ export function Scenarios() {
         <div>
           <p className="eyebrow">Explore your options</p>
           <h1>What if?</h1>
-          <p className="welcome-copy">Pick a what-if, then adjust it. Astro recalculates the impact instantly.</p>
+          <p className="welcome-copy">Choose a scenario and adjust it to see the impact.</p>
           {results && <p className="muted-copy">Calculated from banking activity through {dateFormatter.format(new Date(`${results.current_date}T00:00:00Z`))}; next payday is in {results.days_until_payday} days.</p>}
         </div>
       </section>
@@ -138,7 +137,7 @@ export function Scenarios() {
               <SliderField label="Surprise expense (one-off)" value={currency.format(oneOffCost)} min={0} max={5000} step={100} inputValue={oneOffCost} onChange={setOneOffCost} />
             )}
           </div>
-          <p className="scenario-note"><span className="astro-icon" aria-hidden="true">✦</span> These sliders use your detected income, spending, and balance history.</p>
+          <p className="scenario-note"><span className="astro-icon" aria-hidden="true">✦</span> Based on your income, spending and balance history.</p>
           {scenarioError && <p className="data-status data-error">{scenarioError}</p>}
         </section>
 
@@ -185,8 +184,8 @@ export function Scenarios() {
         <div className="insight-box lever-insight">
           <span className="astro-icon" aria-hidden="true">✦</span>
           <p>{pausedLoan || cutEveryday || delayOneOff
-            ? 'Levers applied. The runway and monthly gap above already include them.'
-            : 'Pull a lever to see how much longer your money would last. Each one recalculates from your real numbers.'}</p>
+            ? 'The figures above include the selected changes.'
+            : 'Select an option to see how much longer your money would last.'}</p>
         </div>
       </section>
     </main>

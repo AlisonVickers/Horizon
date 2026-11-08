@@ -13,7 +13,6 @@ from api_adapter.service import AccountNotFoundError, AdapterAccountService
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# Load GEMINI_API_KEY / GEMINI_MODEL from the project's .env (never committed).
 for env_file in (ROOT / ".env", ROOT / "api_adapter" / ".env"):
     if env_file.exists():
         for line in env_file.read_text(encoding="utf-8").splitlines():
@@ -72,6 +71,11 @@ def budgets(account_id: int):
     return account_call(lambda: service.budgets(account_id))
 
 
+@app.get("/accounts/{account_id}/plans")
+def plans(account_id: int):
+    return account_call(lambda: service.plans(account_id))
+
+
 @app.post("/accounts/{account_id}/scenarios/run")
 def scenario(account_id: int, request: ScenarioRequest):
     return account_call(lambda: service.scenario(
@@ -85,14 +89,12 @@ def assistant(account_id: int, request: AssistantRequest):
     return account_call(lambda: service.assistant(account_id, request.prompt))
 
 
-# Heena's own API (/api/health, /api/accounts/{id}/forecast, /api/accounts/{id}/dashboard).
-from app.api.main import app as heena_app  # noqa: E402  (backend/ is on sys.path via service.py)
+from app.api.main import app as heena_app  # noqa: E402
 
 for route in heena_app.router.routes:
     if getattr(route, "path", "").startswith("/api/"):
         app.router.routes.append(route)
 
-# Serve the built v2 frontend (frontend/dist) from the same server, so one command runs everything.
 FRONTEND_DIST = ROOT / "frontend" / "dist"
 if FRONTEND_DIST.exists():
     app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
