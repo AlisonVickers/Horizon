@@ -16,7 +16,6 @@ export function Budget() {
         limit: currency.format(goal.monthly_limit),
         progress: Math.min((goal.monthly_savings / goal.monthly_limit) * 100, 100),
         insight: goal.rationale,
-        icon: '✦',
       }))
     : []
 
@@ -46,13 +45,15 @@ export function Budget() {
           <p className="welcome-copy">
             A monthly plan based on your recent spending.
           </p>
-          <form className="chat-input" onSubmit={createBudget}>
-            <span className="astro-icon" aria-hidden="true">✦</span>
-            <input value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Ask Astro to create a budget..." />
-            <button className="send-arrow" disabled={creating} type="submit" aria-label="Create budget">↗</button>
-          </form>
-          {assistantMessage && <p className="assistant-reply"><span className="astro-icon" aria-hidden="true">✦</span>{assistantMessage}</p>}
-          {assistantError && <p className="data-status data-error">{assistantError}</p>}
+          <div className="assistant-column">
+            <form className="chat-input" onSubmit={createBudget}>
+              <img className="astro-icon" src="/assets/astro-avatar.svg" alt="" aria-hidden="true" />
+              <input value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Ask Astro to create a budget..." />
+              <button className="send-arrow" disabled={creating} type="submit" aria-label="Create budget">↗</button>
+            </form>
+            {assistantMessage && <p className="assistant-reply"><img className="astro-icon" src="/assets/astro-avatar.svg" alt="" aria-hidden="true" />{assistantMessage}</p>}
+            {assistantError && <p className="data-status data-error">{assistantError}</p>}
+          </div>
           {loading && <p className="data-status">Loading budgets…</p>}
           {error && <p className="data-status data-error">Showing the saved budget view. {error}</p>}
         </div>
@@ -66,7 +67,7 @@ export function Budget() {
       <section className="budget-grid" aria-label="User-created budgets">
         {cards.length > 0 ? cards.map((card) => <BudgetCard {...card} key={card.title} />) : (
           <div className="card budget-empty">
-            <span className="astro-icon" aria-hidden="true">✦</span>
+            <img className="astro-icon" src="/assets/astro-avatar.svg" alt="" aria-hidden="true" />
             <h2>No budgets yet</h2>
             <p className="muted-copy">Tell Astro what you want to accomplish, such as “create a budget to help me save more money.”</p>
           </div>
@@ -74,28 +75,27 @@ export function Budget() {
       </section>
 
       <section className="budget-footer insight-box">
-        <span className="astro-icon" aria-hidden="true">✦</span>
+        <img className="astro-icon" src="/assets/astro-avatar.svg" alt="" aria-hidden="true" />
         <p>Budgets update automatically as your spending changes.</p>
       </section>
     </main>
   )
 }
 
-function BudgetCard({ title, status, spent, limit, progress, insight, icon }: {
+function BudgetCard({ title, status, spent, limit, progress, insight }: {
   title: string
   status: 'Created'
   spent: string
   limit: string
   progress: number
   insight: string
-  icon: string
 }) {
   const statusClass = status.toLowerCase().replace(' ', '-')
 
   return (
     <article className="card budget-card">
       <div className="budget-card-heading">
-        <span className={`budget-icon ${statusClass}`} aria-hidden="true">{icon}</span>
+        <img className={`budget-icon ${statusClass}`} src="/assets/astro-avatar.svg" alt="" aria-hidden="true" />
         <span className={`status-badge ${statusClass === 'watch' ? 'watch' : ''}`}>{status}</span>
       </div>
       <h2>{title}</h2>
@@ -111,7 +111,7 @@ function BudgetCard({ title, status, spent, limit, progress, insight, icon }: {
         <span>Monthly plan</span>
       </div>
       <div className="budget-insight">
-        <span className="astro-icon" aria-hidden="true">✦</span>
+        <img className="astro-icon" src="/assets/astro-avatar.svg" alt="" aria-hidden="true" />
         <p>{insight}</p>
       </div>
     </article>

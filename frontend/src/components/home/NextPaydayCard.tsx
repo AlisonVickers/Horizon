@@ -58,7 +58,7 @@ export function NextPaydayCard({
       </div>
 
       <div className="insight-box payday-insight">
-        <span className="astro-icon" aria-hidden="true">✦</span>
+        <img className="astro-icon" src="/assets/astro-avatar.svg" alt="" aria-hidden="true" />
         {isOver ? (
           <p>
             You have spent <strong>{currency.format(overspent)} more</strong> than your last deposit. Your
