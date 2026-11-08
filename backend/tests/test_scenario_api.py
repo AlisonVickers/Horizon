@@ -2,8 +2,10 @@
 from fastapi.testclient import TestClient
 
 from app.api.main import app
+from api_adapter.main import app as adapter_app
 
 client = TestClient(app)
+adapter_client = TestClient(adapter_app)
 
 
 def test_trip_scenario_api():
@@ -80,3 +82,15 @@ def test_unanchored_scenario_unavailable():
 
     assert response.status_code == 200
     assert response.json()["status"] == "unavailable"
+
+
+def test_frontend_scenario_route_supports_shocks():
+    response = adapter_client.post(
+        "/accounts/61163/scenarios/run",
+        json={"shocks": [{"name": "job_loss_ei", "value": 0.55}]},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["account_id"] == 61163
+    assert data["runway_months"] >= 0
