@@ -105,7 +105,7 @@ h2 { margin-bottom: 0; color: #172235; font: 600 19px/1.2 'Space Grotesk', sans-
 .today-event { color: #d26c28; background: #fff0e4; }
 .calendar-legend { display: flex; gap: 22px; margin-top: 18px; color: #8d98a7; font-size: 11px; }
 .legend-dot { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; }
-.payday-dot { background: #ff9a4a; }.bill-dot { background: #91b4d7; }.period-dot { background: #dce8f1; }
+.payday-dot { background: #1e8e5a; }.bill-dot { background: #91b4d7; }.period-dot { background: #c0392b; }
 .outlook-card { align-self: start; padding: 27px; }
 .outlook-card h2 { margin-bottom: 24px; }
 .outlook-list { border-top: 1px solid #eef0f3; }
@@ -380,3 +380,17 @@ h2 { margin-bottom: 0; color: #172235; font: 600 19px/1.2 'Space Grotesk', sans-
 .legend-line { display: inline-block; width: 18px; height: 0; border-top: 3px solid #2b50d6; }
 .legend-line.dashed { border-top-style: dashed; }
 .negative-value { color: #c0392b; }
+
+.calendar-event.spend-event { color: #c0392b; background: rgba(192, 57, 43, 0.1); }
+.legend-out { color: #c0392b; font-weight: 600; }
+.year-totals { display: flex; gap: 32px; margin-bottom: 18px; }
+.year-totals span { display: block; font-size: 12px; color: #6b7a90; }
+.year-totals strong { font-size: 22px; }
+.year-bar-pair { display: flex; align-items: flex-end; justify-content: center; gap: 3px; width: 100%; height: 100%; }
+.year-bar.money-in, .year-bar.money-out { width: min(14px, 45%); min-height: 3px; border-radius: 4px 4px 0 0; opacity: 1; }
+.year-bar.money-in { background: #1e8e5a; }
+.year-bar.money-out { background: #c0392b; }
+.year-legend { justify-content: center; margin-top: 14px; }
+.legend-in { color: #1e8e5a; font-weight: 600; }
+.nav-link { display: inline-flex; align-items: center; gap: 7px; }
+.nav-icon { display: inline-block; width: 16px; height: 16px; background: currentColor; mask-size: contain; mask-repeat: no-repeat; mask-position: center; -webkit-mask-size: contain; -webkit-mask-repeat: no-repeat; -webkit-mask-position: center; }

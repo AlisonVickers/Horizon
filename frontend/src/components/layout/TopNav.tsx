@@ -33,6 +33,7 @@ export function TopNav({ activeTab, onTabChange }: TopNavProps) {
             onClick={() => onTabChange(tab)}
             type="button"
           >
+            <i className="nav-icon" aria-hidden="true" style={{ maskImage: `url(/assets/icons/${tab.toLowerCase()}.svg)`, WebkitMaskImage: `url(/assets/icons/${tab.toLowerCase()}.svg)` }} />
             {tab}
           </button>
         ))}

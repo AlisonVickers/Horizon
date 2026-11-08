@@ -98,11 +98,11 @@ function MonthView({ data }: { data: CalendarResponse }) {
                   <span className={iso === asOf ? 'today-number' : ''}>{iso ? Number(iso.slice(8)) : ''}</span>
                   {income.length > 0 && (
                     <small className="calendar-event payday-event" title={income.map((event) => event.label).join(', ')}>
-                      {income.some((event) => event.type === 'payday') ? 'Payday' : '+'}{currency.format(income.reduce((sum, event) => sum + event.amount, 0))}
+                      {income.some((event) => event.type === 'payday') ? 'Payday ' : '+'}{currency.format(income.reduce((sum, event) => sum + event.amount, 0))}
                     </small>
                   )}
                   {bills.map((bill) => <small className="calendar-event bill-event" key={bill.label}>{bill.label}</small>)}
-                  {spent > 0 && <small className="calendar-event" title="Money out this day">−{currency.format(spent)}</small>}
+                  {spent > 0 && <small className="calendar-event spend-event" title="Money out this day">−{currency.format(spent)}</small>}
                   {iso === asOf && <small className="calendar-event today-event">Today</small>}
                 </div>
               )
@@ -111,7 +111,7 @@ function MonthView({ data }: { data: CalendarResponse }) {
           <div className="calendar-legend">
             <span><i className="legend-dot payday-dot" /> Money in / payday</span>
             <span><i className="legend-dot bill-dot" /> Upcoming bill</span>
-            <span><i className="legend-dot period-dot" /> Money out</span>
+            <span className="legend-out"><i className="legend-dot period-dot" /> Money out</span>
           </div>
         </article>
         <OutlookCard month={data.months.find((row) => row.month === selected)} label={selected} />
@@ -194,32 +194,45 @@ function WeekView({ data }: { data: CalendarResponse }) {
 }
 
 function YearView({ months }: { months: Months }) {
-  const maxAbs = Math.max(...months.map((month) => Math.abs(month.saved)), 1)
-  const total = months.reduce((sum, month) => sum + month.saved, 0)
+  const max = Math.max(...months.flatMap((month) => [month.income, month.spending]), 1)
+  const totalIn = months.reduce((sum, month) => sum + month.income, 0)
+  const totalOut = months.reduce((sum, month) => sum + month.spending, 0)
+  const net = totalIn - totalOut
   const best = months.reduce((top, month) => (month.saved > top.saved ? month : top), months[0])
   const worst = months.reduce((low, month) => (month.saved < low.saved ? month : low), months[0])
 
   return (
     <section className="year-view-panel">
       <div className="section-heading">
-        <div><p className="eyebrow">Savings history</p><h2>Last 12 months</h2></div>
-        <span className="muted-copy">Net {total >= 0 ? 'saved' : 'drawn'} <strong>{currency.format(Math.abs(total))}</strong></span>
+        <div><p className="eyebrow">Money in and out</p><h2>Last 12 months</h2></div>
+        <span className="muted-copy">Net {net >= 0 ? 'saved' : 'drawn'} <strong>{currency.format(Math.abs(net))}</strong></span>
       </div>
       <div className="card year-chart-card">
+        <div className="year-totals">
+          <div><span>Money in</span><strong className="positive-value">{currency.format(totalIn)}</strong></div>
+          <div><span>Money out</span><strong className="negative-value">{currency.format(totalOut)}</strong></div>
+        </div>
         <div className="year-chart">
           {months.map((month) => (
-            <div className="year-bar-column" key={month.month} title={`${month.month}: ${currency.format(month.saved)}`}>
-              <div className={`year-bar ${month.saved < 0 ? 'is-negative' : ''}`} style={{ height: `${(Math.abs(month.saved) / maxAbs) * 100}%` }} />
+            <div className="year-bar-column" key={month.month}>
+              <div className="year-bar-pair">
+                <div className="year-bar money-in" style={{ height: `${(month.income / max) * 100}%` }} title={`Money in: ${currency.format(month.income)}`} />
+                <div className="year-bar money-out" style={{ height: `${(month.spending / max) * 100}%` }} title={`Money out: ${currency.format(month.spending)}`} />
+              </div>
               <span>{shortMonth.format(toDate(`${month.month}-01`))}</span>
             </div>
           ))}
+        </div>
+        <div className="calendar-legend year-legend">
+          <span className="legend-in"><i className="legend-dot payday-dot" /> Money in</span>
+          <span className="legend-out"><i className="legend-dot period-dot" /> Money out</span>
         </div>
         {best && worst && (
           <div className="insight-box year-insight">
             <span className="astro-icon" aria-hidden="true">✦</span>
             <p>
               You saved the most in <strong>{monthName.format(toDate(`${best.month}-01`))}</strong> ({currency.format(best.saved)}).
-              {worst.saved < 0 && <> Your toughest month was <strong>{monthName.format(toDate(`${worst.month}-01`))}</strong>, when you drew {currency.format(Math.abs(worst.saved))} from savings.</>}
+              {worst.saved < 0 && <> Your toughest month was <strong>{monthName.format(toDate(`${worst.month}-01`))}</strong>, when you spent {currency.format(Math.abs(worst.saved))} more than you earned.</>}
             </p>
           </div>
         )}
