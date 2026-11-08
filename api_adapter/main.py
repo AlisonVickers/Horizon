@@ -72,6 +72,11 @@ def budgets(account_id: int):
     return account_call(lambda: service.budgets(account_id))
 
 
+@app.get("/accounts/{account_id}/plans")
+def plans(account_id: int):
+    return account_call(lambda: service.plans(account_id))
+
+
 @app.post("/accounts/{account_id}/scenarios/run")
 def scenario(account_id: int, request: ScenarioRequest):
     return account_call(lambda: service.scenario(

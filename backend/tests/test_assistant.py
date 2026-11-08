@@ -77,3 +77,27 @@ def test_gemini_rewrite_rejects_unverified_numbers():
         "You bring in $1,000.",
         {**details, "conclusion": "informational"},
     )
+
+
+def test_home_returns_new_frontend_balance_fields():
+    service = AdapterAccountService(DATA_DIR)
+    home = service.home(61163)
+
+    assert isinstance(home["baseline_runway"], float)
+    assert 0 <= home["baseline_runway"] <= 120
+    assert len(home["balance_history"]) <= 12
+    assert all(set(point) == {"month", "balance"} for point in home["balance_history"])
+
+
+def test_plans_returns_goal_and_backup_calculations():
+    service = AdapterAccountService(DATA_DIR)
+    plans = service.plans(61163)
+
+    assert plans["account_id"] == 61163
+    assert 0 <= plans["goal_plan"]["progress_pct"] <= 100
+    assert plans["backup_plan"]["runway_without_actions"] >= 0
+    assert len(plans["backup_plan"]["actions"]) == 2
+    assert all(
+        action["months_gained"] >= 0
+        for action in plans["backup_plan"]["actions"]
+    )

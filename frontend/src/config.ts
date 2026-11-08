@@ -8,7 +8,6 @@ function readAccountId(): number {
   return DEFAULT_ACCOUNT_ID
 }
 
-/** Account shown in the app. Switch with ?account=75623 or the account box in the top bar. */
 export const ACCOUNT_ID = readAccountId()
 
 export function switchAccount(accountId: number) {
