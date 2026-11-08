@@ -160,7 +160,7 @@ class ScenarioSimulatorService:
         shocks: list[dict],
         safety_buffer: float = 500.0,
     ) -> dict:
-        """Apply the scenario event keys used by the dashboard UI."""
+        """Apply the shock keys used by the adapter's scenario dashboard."""
         baseline_events = [dict(event) for event in events]
         simulated_events = [dict(event) for event in events]
         variable_outflow = monthly_variable_outflow
@@ -174,9 +174,7 @@ class ScenarioSimulatorService:
                 share = value if value <= 1 else value / 100
                 for event in simulated_events:
                     if event.get("event_type") == "income" and event["amount"] > 0:
-                        event["amount"] = float(
-                            self._money(event["amount"] * share)
-                        )
+                        event["amount"] = float(self._money(event["amount"] * share))
             elif name == "pay_cut_pct":
                 reduction = value if value <= 1 else value / 100
                 for event in simulated_events:
@@ -188,9 +186,7 @@ class ScenarioSimulatorService:
                 increase = value if value <= 1 else value / 100
                 for event in simulated_events:
                     category = str(event.get("category", "")).lower()
-                    if event["amount"] < 0 and (
-                        "rent" in category or "household" in category
-                    ):
+                    if event["amount"] < 0 and ("rent" in category or "household" in category):
                         event["amount"] = float(
                             self._money(event["amount"] * (1 + increase))
                         )
@@ -203,10 +199,13 @@ class ScenarioSimulatorService:
                         "event_type": "scenario_expense",
                         "category": "new car payment",
                     })
-                    day = min(cursor.day, calendar.monthrange(
-                        cursor.year + (cursor.month == 12),
-                        1 if cursor.month == 12 else cursor.month + 1,
-                    )[1])
+                    day = min(
+                        cursor.day,
+                        calendar.monthrange(
+                            cursor.year + (cursor.month == 12),
+                            1 if cursor.month == 12 else cursor.month + 1,
+                        )[1],
+                    )
                     cursor = date(
                         cursor.year + (cursor.month == 12),
                         1 if cursor.month == 12 else cursor.month + 1,
@@ -229,10 +228,7 @@ class ScenarioSimulatorService:
                         )
             elif name == "everyday_cut_pct":
                 reduction = value if value <= 1 else value / 100
-                variable_outflow = max(
-                    0.0,
-                    variable_outflow * (1 - reduction),
-                )
+                variable_outflow = max(0.0, variable_outflow * (1 - reduction))
             else:
                 raise ValueError(f"Unsupported scenario shock: {name}")
 
@@ -263,24 +259,18 @@ class ScenarioSimulatorService:
         difference = self._money(
             simulated["lowest_adjusted_balance"]
         ) - self._money(baseline["lowest_adjusted_balance"])
-
         return {
             "status": "estimated",
             "baseline": baseline,
             "simulated": simulated,
             "change_in_lowest_balance": float(difference),
-            "baseline_buffer_breached": (
-                baseline["lowest_adjusted_balance"] < safety_buffer
-            ),
-            "simulated_buffer_breached": (
-                simulated["lowest_adjusted_balance"] < safety_buffer
-            ),
+            "baseline_buffer_breached": baseline["lowest_adjusted_balance"] < safety_buffer,
+            "simulated_buffer_breached": simulated["lowest_adjusted_balance"] < safety_buffer,
             "scenario_events": simulated_events,
             "one_off_costs": one_off_costs,
             "monthly_variable_outflow": variable_outflow,
             "limitations": (
-                "This is a hypothetical scenario based on historical "
-                "recurring cashflow and estimated cash withdrawals. "
-                "It is not a guarantee of affordability."
+                "This is a hypothetical scenario based on historical recurring cashflow "
+                "and estimated cash withdrawals. It is not a guarantee of affordability."
             ),
         }
