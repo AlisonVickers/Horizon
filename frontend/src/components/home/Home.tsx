@@ -65,6 +65,7 @@ export function Home() {
     : 'your latest banking date'
   const [prompt, setPrompt] = useState('')
   const [assistantMessage, setAssistantMessage] = useState<string | null>(null)
+  const [assistantDetails, setAssistantDetails] = useState<Record<string, unknown> | null>(null)
   const [assistantError, setAssistantError] = useState<string | null>(null)
   const [assistantLoading, setAssistantLoading] = useState(false)
 
@@ -77,6 +78,7 @@ export function Home() {
     try {
       const response = await askAssistant(ACCOUNT_ID, trimmedPrompt)
       setAssistantMessage(response.message)
+      setAssistantDetails(response.data)
       setPrompt('')
     } catch (error) {
       setAssistantError(error instanceof Error ? error.message : 'Astro is unavailable right now')
@@ -106,6 +108,13 @@ export function Home() {
         </form>
         {assistantLoading && <p className="data-status">Astro is thinking…</p>}
         {assistantMessage && <p className="assistant-reply"><span className="astro-icon" aria-hidden="true">✦</span>{assistantMessage}</p>}
+        {assistantDetails && (
+          <p className="assistant-disclaimer">
+            Based on {assistantDetails.projection_scope === 'detected_recurring_events_plus_requested_purchase'
+              ? 'detected recurring activity plus your requested purchase'
+              : 'detected recurring activity'}; future balances are estimates, not live balances.
+          </p>
+        )}
         {assistantError && <p className="data-status data-error">Astro could not answer right now. {assistantError}</p>}
         {loading && <p className="data-status">Loading your account…</p>}
         {error && <p className="data-status data-error">Showing the latest saved view. {error}</p>}

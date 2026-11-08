@@ -27,6 +27,7 @@ h2 { margin-bottom: 0; color: #172235; font: 600 19px/1.2 'Space Grotesk', sans-
 .chat-input button { border: 0; background: transparent; cursor: pointer; }
 .chat-input button:disabled { cursor: wait; opacity: .5; }
 .assistant-reply { display: flex; align-items: center; gap: 9px; max-width: 475px; margin: 10px 0 0 auto; color: #56657a; font-size: 12px; }
+.assistant-disclaimer { max-width: 475px; margin: 5px 0 0 auto; color: #8a96a5; font-size: 10px; text-align: right; }
 .assistant-reply .astro-icon { width: 23px; height: 23px; border-radius: 7px; font-size: 13px; }
 .dashboard-grid { display: grid; grid-template-columns: 1.14fr .86fr; gap: 20px; }
 .card { border: 1px solid #edf0f3; border-radius: 15px; padding: 25px; background: #fff; box-shadow: 0 8px 26px rgba(37, 53, 78, .06); }
