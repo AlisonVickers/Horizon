@@ -21,7 +21,7 @@ for env_file in (ROOT / ".env", ROOT / "api_adapter" / ".env"):
             if sep and not line.lstrip().startswith("#"):
                 os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
-service = AdapterAccountService(ROOT / "data" / "raw")
+service = AdapterAccountService(ROOT / "data" / "parquet")
 
 app = FastAPI(title="Horizon API adapter", version="1.0.0")
 app.add_middleware(
@@ -84,6 +84,13 @@ def scenario(account_id: int, request: ScenarioRequest):
 def assistant(account_id: int, request: AssistantRequest):
     return account_call(lambda: service.assistant(account_id, request.prompt))
 
+
+# Heena's own API (/api/health, /api/accounts/{id}/forecast, /api/accounts/{id}/dashboard).
+from app.api.main import app as heena_app  # noqa: E402  (backend/ is on sys.path via service.py)
+
+for route in heena_app.router.routes:
+    if getattr(route, "path", "").startswith("/api/"):
+        app.router.routes.append(route)
 
 # Serve the built v2 frontend (frontend/dist) from the same server, so one command runs everything.
 FRONTEND_DIST = ROOT / "frontend" / "dist"

@@ -10,4 +10,4 @@ __pycache__/
 frontend/.env
 node_modules/
 .DS_Store
-data/raw/transactions.csv
+data/raw/data/transactions.csv

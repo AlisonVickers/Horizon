@@ -3,6 +3,7 @@ import type { FormEvent } from 'react'
 import { askAssistant } from '../../api/client'
 import { ACCOUNT_ID } from '../../config'
 import { NextPaydayCard } from './NextPaydayCard'
+import { BalanceOutlookCard } from './BalanceOutlookCard'
 import { getHome } from '../../api/client'
 import type { HomeResponse } from '../../api/client'
 import { useAccountData } from '../../hooks/useAccountData'
@@ -146,6 +147,8 @@ export function Home() {
             </span>
           </div>
         </article>
+
+        <BalanceOutlookCard asOf={data?.current_date ?? null} />
 
         <article className="card glance-card">
           <div className="card-heading">

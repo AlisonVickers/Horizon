@@ -126,6 +126,25 @@ export type CalendarResponse = {
   peer_everyday_median: number
 }
 
+export type DashboardResponse = {
+  account_id: number
+  data_as_of: string | null
+  period: { start_date: string; end_date: string }
+  balance: { historical_month_end_balance: number | null; as_of: string | null; is_live: boolean }
+  cashflow: { predicted_recurring_income: number; predicted_recurring_expenses: number; event_count: number }
+  projected_balance: {
+    starting_balance: number
+    projected_ending_balance: number
+    lowest_projected_balance: number
+    timeline: Array<{ date: string; category: string; event_type: string; amount: number; projected_balance: number }>
+  } | null
+  balance_alerts: {
+    status: 'ok' | 'warning' | 'unavailable'
+    safety_buffer: number
+    alerts: Array<{ date: string | null; type: string; projected_balance: number; shortfall: number }>
+  }
+}
+
 export type AssistantResponse = {
   message: string
   data: Record<string, unknown>
@@ -173,4 +192,10 @@ export function askAssistant(accountId: number, prompt: string) {
     method: 'POST',
     body: JSON.stringify({ prompt }),
   })
+}
+
+/** Heena's dashboard: projects the balance forward from the last month-end using detected recurring events. */
+export function getDashboard(accountId: number, startDate: string, endDate: string, safetyBuffer = 500) {
+  const query = new URLSearchParams({ start_date: startDate, end_date: endDate, safety_buffer: String(safetyBuffer) })
+  return request<DashboardResponse>(`/api/accounts/${accountId}/dashboard?${query}`)
 }

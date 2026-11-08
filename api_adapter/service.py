@@ -65,7 +65,10 @@ class AdapterAccountService:
     # ------------------------------------------------------------------ data
     @cached_property
     def _accounts(self) -> pd.DataFrame:
-        return pd.read_csv(self.data_dir / "accounts.csv")
+        for candidate in (self.data_dir / "accounts.parquet", self.data_dir.parent / "raw" / "data" / "accounts.csv"):
+            if candidate.exists():
+                return pd.read_parquet(candidate) if candidate.suffix == ".parquet" else pd.read_csv(candidate)
+        raise FileNotFoundError("accounts dataset not found")
 
     @cached_property
     def _tables(self) -> dict[str, pd.DataFrame]:
