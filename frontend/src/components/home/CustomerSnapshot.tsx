@@ -5,10 +5,10 @@ const currency = new Intl.NumberFormat('en-CA', { currency: 'CAD', style: 'curre
 export function CustomerSnapshot({ profile, runway }: { profile: Profile; runway: number }) {
   const runwayText = runway >= 120 ? 'No shortfall' : `${runway.toFixed(1)} months`
   const items = [
-    { label: 'Monthly income', value: currency.format(profile.income), formula: 'I = median money_in' },
-    { label: 'Fixed costs', value: currency.format(profile.fixed_costs), formula: 'F = median(bills + insurance + loan)' },
-    { label: 'Savings buffer', value: currency.format(profile.buffer), formula: 'B = mean avg_daily_balance, last 6 months' },
-    { label: 'Runway today', value: runwayText, formula: 'runway = B ÷ (S − I), capped at 120' },
+    { label: 'Monthly income', value: currency.format(profile.income) },
+    { label: 'Fixed costs', value: currency.format(profile.fixed_costs) },
+    { label: 'Savings buffer', value: currency.format(profile.buffer) },
+    { label: 'Runway today', value: runwayText },
   ]
   return (
     <section className="card snapshot-card">
@@ -27,15 +27,6 @@ export function CustomerSnapshot({ profile, runway }: { profile: Profile; runway
           </div>
         ))}
       </div>
-      <details className="how-calculated">
-        <summary>How we calculated this</summary>
-        <ul>
-          {items.map((item) => <li key={item.formula}><code>{item.formula}</code></li>)}
-          <li><code>S = median money_out</code> = {currency.format(profile.spending)}</li>
-          <li><code>H = median household_bills</code> = {currency.format(profile.household_bills)}</li>
-          <li><code>P = loan payment (status C or D)</code> = {currency.format(profile.loan_payment)}</li>
-        </ul>
-      </details>
     </section>
   )
 }

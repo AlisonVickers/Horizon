@@ -1,0 +1,10 @@
+rule,value,unit,notes,source
+benefit_rate,0.55,share of average insurable weekly earnings,Basic rate; fixed for the life of the claim,https://www.canada.ca/en/services/benefits/ei/ei-regular-benefit/benefit-amount.html
+max_insurable_earnings_annual,68900.0,CAD per year,As of 2026-01-01,https://www.canada.ca/en/services/benefits/ei/ei-regular-benefit/benefit-amount.html
+max_weekly_benefit,729.0,CAD per week,2026,https://www.canada.ca/en/services/benefits/ei/ei-regular-benefit/benefit-amount.html
+max_monthly_benefit_approx,3159.0,CAD per month,Calculated: 729 x 52 / 12,https://www.canada.ca/en/services/benefits/ei/ei-regular-benefit/benefit-amount.html (calculated)
+min_weeks_payable,14.0,weeks,Depends on regional unemployment rate and insurable hours,https://www.canada.ca/en/services/benefits/ei/ei-regular-benefit/benefit-amount.html
+max_weeks_payable,45.0,weeks,Depends on regional unemployment rate and insurable hours,https://www.canada.ca/en/services/benefits/ei/ei-regular-benefit/benefit-amount.html
+family_supplement_max_rate,0.8,share of average insurable weekly earnings,"Only if net family income <= 25,921 CAD, with children and Canada Child Benefit",https://www.canada.ca/en/services/benefits/ei/ei-regular-benefit/benefit-amount.html
+family_supplement_income_threshold,25921.0,CAD per year,Supplement not payable at this income,https://www.canada.ca/en/services/benefits/ei/ei-regular-benefit/benefit-amount.html
+taxable,1.0,"1 = yes, 0 = no",Federal and provincial tax deducted from payments,https://www.canada.ca/en/services/benefits/ei/ei-regular-benefit/benefit-amount.html

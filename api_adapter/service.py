@@ -12,6 +12,8 @@ from typing import Any
 
 import pandas as pd
 
+from api_adapter.ei_reference import EIReference, EIReferenceError
+
 BACKEND_ROOT = Path(__file__).resolve().parents[1] / "backend"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
@@ -22,6 +24,7 @@ from app.services.dashboard_service import DashboardService # noqa: E402
 from app.services.expense_detector import ExpenseDetector # noqa: E402
 from app.services.income_detector import IncomeDetector # noqa: E402
 from app.services.projected_balance import ProjectedBalanceService # noqa: E402
+from app.services.resilience_scenario import ResilienceScenarioService # noqa: E402
 from app.services.scenario_simulator import ScenarioSimulatorService # noqa: E402
 
 FIXED_COLUMNS = ("household_bills", "insurance", "loan_payments")
@@ -68,6 +71,12 @@ DATE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 RELATIVE_DATE_PATTERN = re.compile(r"\b(?:next|this) month\b", re.IGNORECASE)
+JOB_LOSS_PATTERN = re.compile(
+    r"\b(?:laid off|layoff|job loss|lost (?:my|their|your|a|the) job|"
+    r"lose (?:my|their|your|a|the) job|unemployed|unemployment|"
+    r"fired|employment insurance)\b"
+)
+REPAIR_PATTERN = re.compile(r"\b(?:repair|repairs|repairing|furnace)\b", re.IGNORECASE)
 
 
 class AccountNotFoundError(LookupError):
@@ -681,6 +690,243 @@ class AdapterAccountService:
             year += 1
         return date(year, month, 1)
 
+    @staticmethod
+    def _scenario_kind(prompt: str) -> str | None:
+        job_loss = bool(JOB_LOSS_PATTERN.search(prompt.lower()) or re.search(r"\bEI\b", prompt, re.IGNORECASE))
+        repair = bool(REPAIR_PATTERN.search(prompt))
+        if job_loss and repair:
+            return "combined_scenario"
+        if job_loss:
+            return "job_loss_scenario"
+        if repair:
+            return "repair_scenario"
+        return None
+
+    def _resilience_question(
+        self, account_id: int, prompt: str, profile: dict[str, float], kind: str
+    ) -> tuple[str, dict[str, Any], list[str]]:
+        details: dict[str, Any] = {"question_kind": kind}
+        trace = ["account_profile"]
+        if kind == "combined_scenario":
+            return (
+                "I can't reliably interpret combined job-loss and repair scenarios yet. "
+                "Please ask about each scenario separately.",
+                details, trace,
+            )
+
+        scenario_profile = {
+            "status": "available",
+            "account_id": account_id,
+            "typical_monthly_income": profile["income"],
+            "typical_monthly_spending": profile["spending"],
+            "household_bills": profile["household_bills"],
+            "savings_buffer": max(profile["buffer"], 0.0),
+        }
+        scenario_service = ResilienceScenarioService()
+        if kind == "job_loss_scenario":
+            hours_matches = re.findall(
+                r"\b(\d[\d,]*)\s+(?:insurable\s+)?hours?\b", prompt, re.IGNORECASE
+            )
+            if len(hours_matches) > 1:
+                return "Please provide one number of insurable hours.", details, trace
+            hours = int(hours_matches[0].replace(",", "")) if hours_matches else None
+            try:
+                reference = EIReference(self.data_dir, self._accounts).lookup(account_id, hours)
+            except EIReferenceError as error:
+                return f"Astro cannot use the local EI reference: {error}.", details, trace
+            details["ei_reference"] = reference
+            trace.extend(["account_district", "ei_reference"])
+            reference_note = (
+                f"The {reference['unemployment_rate_year']} dataset rate of "
+                f"{reference['unemployment_rate_pct']:g}% is a historical proxy, "
+                "not a verified Canadian EI regional rate. "
+                f"The {reference['rules_year']} Canadian EI reference lists a "
+                f"{reference['benefit_rate'] * 100:g}% basic rate and a "
+                f"${reference['max_weekly_benefit']:,.0f} weekly maximum before tax."
+            )
+            rates = re.findall(r"(?<![\d.])(\d+(?:\.\d+)?)\s*(?:%|percent\b|per cent\b)", prompt, re.IGNORECASE)
+            ambiguous_rate = not re.search(
+                r"\b(?:ei|employment insurance|benefits?|replacement)\b", prompt, re.IGNORECASE
+            ) or bool(re.search(
+                r"\b(?:cut|reduc(?:e|ed|tion)|decreas(?:e|ed)|less)\b", prompt, re.IGNORECASE
+            ))
+            durations = re.findall(
+                r"\bfor\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+months?\b",
+                prompt, re.IGNORECASE,
+            )
+            if not durations and (
+                not rates or (hours is None and len(rates) == 1 and not ambiguous_rate and 0 <= float(rates[0]) <= 100)
+            ):
+                if hours is None:
+                    weeks_min, weeks_max = reference["weeks_payable_range"]
+                    if rates:
+                        weekly_benefit = profile["income"] * 12 / 52 * float(rates[0]) / 100
+                        amount_note = (
+                            f"Using your hypothetical {float(rates[0]):g}% income replacement, "
+                            "without applying the EI cap"
+                        )
+                    else:
+                        weekly_benefit = min(
+                            profile["income"] * 12 / 52 * reference["benefit_rate"],
+                            reference["max_weekly_benefit"],
+                        )
+                        amount_note = "Assuming typical income is gross insurable earnings, estimated EI"
+                    monthly_benefit = weekly_benefit * 52 / 12
+                    buffer = scenario_profile["savings_buffer"]
+                    shortfall = max(profile["spending"] - monthly_benefit, 0.0)
+                    covers_min = buffer >= shortfall * weeks_min * 12 / 52
+                    covers_max = buffer >= shortfall * weeks_max * 12 / 52
+                    if covers_max:
+                        outcome = "would cover the entire estimated range"
+                    elif not covers_min:
+                        outcome = "would not cover even the shortest estimated period"
+                    else:
+                        outcome = "would cover the shorter period but not the longer one"
+                    details.update({
+                        "income_after": monthly_benefit,
+                        "monthly_shortfall": shortfall,
+                        "covers_min_weeks": covers_min,
+                        "covers_max_weeks": covers_max,
+                    })
+                    trace.append("ei_range_estimate")
+                    return (
+                        f"{amount_note} is "
+                        f"${weekly_benefit:,.0f} per week before tax (about ${monthly_benefit:,.0f} per month). "
+                        f"Depending on insurable hours, the table gives {weeks_min}–{weeks_max} weeks "
+                        f"if eligible; eligibility is not established. Against typical spending of "
+                        f"${profile['spending']:,.0f} per month, the ${buffer:,.0f} historical average "
+                        f"balance used as a buffer {outcome}, assuming steady income and spending. "
+                        f"{reference_note} Insurable hours, earnings, taxes, and benefit delays are unverified; "
+                        "the period after benefits end is not modeled.",
+                        details, trace,
+                    )
+                weeks = reference["weeks_payable"]
+                if weeks == 0:
+                    return (
+                        f"{reference_note} The local table lists 0 payable weeks for "
+                        f"{hours:,} hours at this proxy rate. This does not determine actual EI eligibility.",
+                        details, trace,
+                    )
+                weekly_income = profile["income"] * 12 / 52
+                weekly_benefit = min(
+                    weekly_income * reference["benefit_rate"], reference["max_weekly_benefit"]
+                )
+                monthly_benefit = weekly_benefit * 52 / 12
+                duration = weeks * 12 / 52
+                buffer = scenario_profile["savings_buffer"]
+                shortfall = max(profile["spending"] - monthly_benefit, 0.0)
+                outlasts = buffer >= shortfall * duration and (buffer > 0 or shortfall == 0)
+                result = scenario_service.simulate(
+                    scenario_profile,
+                    income_replacement_rate=monthly_benefit / profile["income"] if profile["income"] > 0 else 0,
+                )
+                details.update({
+                    "income_after": monthly_benefit,
+                    "monthly_shortfall": shortfall,
+                    "outlasts_benefit": outlasts,
+                    "scenario": result,
+                })
+                trace.append("resilience_scenario")
+                return (
+                    f"{reference_note} With {hours:,} insurable hours, the table gives "
+                    f"{weeks} weeks as a hypothetical estimate. Assuming typical income represents "
+                    f"gross insurable earnings, the capped estimate is ${weekly_benefit:,.0f} per week "
+                    f"before tax (about ${monthly_benefit:,.0f} per month), against "
+                    f"${profile['spending']:,.0f} typical monthly spending. Using a "
+                    f"${buffer:,.0f} historical average balance as the buffer, it "
+                    f"{'would' if outlasts else 'would not'} cover the estimated benefit period. "
+                    "This is not an eligibility decision: actual insurable earnings, hours, "
+                    "regional rate, taxes, delays and benefit expiry have not been verified.",
+                    details, trace,
+                )
+            if len(rates) != 1 or len(durations) != 1 or ambiguous_rate:
+                return (
+                    f"{reference_note} Please restate the job-loss scenario with one income-replacement percentage "
+                    "and the number of months it lasts, for example 55% for 6 months; "
+                    "or ask about EI with the number of insurable hours.",
+                    details, trace,
+                )
+            rate = float(rates[0]) / 100
+            duration_text = durations[0].lower()
+            duration = int(duration_text) if duration_text.isdigit() else WORD_AMOUNTS[duration_text]
+            if not 0 <= rate <= 1 or duration <= 0:
+                return (
+                    "Please provide an income-replacement percentage between 0 and 100 "
+                    "and a positive number of months.",
+                    details, trace,
+                )
+            result = scenario_service.simulate(
+                scenario_profile, income_replacement_rate=rate, benefit_duration_months=duration,
+            )
+            income_after = profile["income"] * rate
+            gap = max(profile["spending"] - income_after, 0.0)
+            buffer = scenario_profile["savings_buffer"]
+            outlasts = buffer >= gap * duration and (buffer > 0 or gap == 0)
+            result["outlasts_benefit"] = outlasts
+            details.update({
+                "income_replacement_rate": rate,
+                "benefit_duration_months": duration,
+                "income_after": income_after,
+                "monthly_shortfall": gap,
+                "outlasts_benefit": outlasts,
+                "scenario": result,
+            })
+            outcome = "would cover" if outlasts else "would not cover"
+            message = (
+                f"At {rate * 100:g}% of typical income, estimated income is ${income_after:,.0f} per month "
+                f"against ${profile['spending']:,.0f} of typical monthly spending. "
+                f"With a ${buffer:,.0f} historical average balance as the starting buffer, "
+                f"the estimate suggests it {outcome} the {duration}-month period "
+                f"(monthly shortfall: ${gap:,.0f}). "
+                "This assumes steady monthly income and spending, no other changes, and no EI cap or delay; "
+                "EI eligibility is not verified, and what happens after benefits end is not modeled."
+                f" {reference_note} The scenario's stated percentage is hypothetical, not a capped EI payment."
+            )
+        else:
+            month_cost = bool(re.search(
+                r"\b(?:a|one|1)\s+(?:full\s+)?month(?:'s| of)?\s+"
+                r"(?:(?:my|your|their|the|usual|typical|monthly)\s+)*(?:spending|expenses|expenditure)\b",
+                prompt, re.IGNORECASE,
+            ))
+            amounts = re.findall(
+                r"(?:\$\s*|CAD\s*)(\d[\d,]*(?:\.\d{1,2})?)"
+                r"|\b(\d[\d,]*(?:\.\d{1,2})?)\s*(?:dollars?|bucks?)\b"
+                r"|\bcosts?\s+(\d[\d,]*(?:\.\d{1,2})?)(?![\w.,%])"
+                r"(?!\s*(?:%|percent|per cent|months?|weeks?|years?)\b)",
+                prompt, re.IGNORECASE,
+            )
+            if (not month_cost and len(amounts) != 1) or (month_cost and amounts):
+                return (
+                    "Please restate the repair scenario with one repair cost in dollars, "
+                    "or say it costs one month of typical spending.",
+                    details, trace,
+                )
+            cost = profile["spending"] if month_cost else float(next(part for part in amounts[0] if part).replace(",", ""))
+            result = scenario_service.simulate(scenario_profile, one_off_cost=cost)
+            buffer = scenario_profile["savings_buffer"]
+            after = buffer - cost
+            details.update({
+                "one_off_cost": cost,
+                "buffer_after_cost": after,
+                "scenario": result,
+            })
+            coverage = (
+                f"leaving an estimated ${after:,.0f}" if after >= 0
+                else f"exceeding that buffer by ${abs(after):,.0f}"
+            )
+            message = (
+                f"The estimated one-off repair cost is ${cost:,.0f}"
+                + (" (one month of typical spending)" if month_cost else "")
+                + f". Compared with the ${buffer:,.0f} historical average balance used as a buffer, "
+                f"it would reduce the buffer by that amount, {coverage}. "
+                f"Typical income is ${profile['income']:,.0f} per month and spending is "
+                f"${profile['spending']:,.0f} per month. "
+                "This assumes the repair is paid immediately and income and spending stay unchanged; "
+                "the historical average balance is not a live or guaranteed available balance."
+            )
+        trace.append("resilience_scenario")
+        return message, details, trace
+
     def _question_calculation(
         self,
         account_id: int,
@@ -917,8 +1163,13 @@ class AdapterAccountService:
     def assistant(self, account_id: int, prompt: str) -> dict[str, Any]:
         tables = self._load(account_id)
         profile = self.profile(tables)
-        is_budget_request = self._is_budget_request(prompt)
-        if is_budget_request:
+        scenario_kind = self._scenario_kind(prompt)
+        is_budget_request = not scenario_kind and self._is_budget_request(prompt)
+        if scenario_kind:
+            message, calculation_data, trace = self._resilience_question(
+                account_id, prompt, profile, scenario_kind
+            )
+        elif is_budget_request:
             self._budget_requests.setdefault(account_id, []).append(prompt)
             amount = self._requested_amount(prompt)
             self._budget_preferences[account_id] = {
@@ -950,7 +1201,9 @@ class AdapterAccountService:
                 account_id, prompt, tables, profile
             )
         calculation_data.setdefault("conclusion", "budget_created" if is_budget_request else "informational")
-        if calculation_data.get("question_kind") == "purchase" and calculation_data["requested_amount"] is None:
+        if scenario_kind or (
+            calculation_data.get("question_kind") == "purchase" and calculation_data["requested_amount"] is None
+        ):
             ai_message, gemini_status = None, "not_needed"
         else:
             ai_message, gemini_status = self._ask_gemini(
