@@ -25,7 +25,7 @@
 | GET | /api/accounts/{id}/dashboard?start_date=&end_date=&safety_buffer= | Heena's projected balance and low-balance alerts (powers the Balance outlook card) |
 | POST | /accounts/{id}/assistant | `{prompt}` returns Astro's answer (engine numbers, explained by Gemini) |
 
-Shock names: `job_loss_ei` (share of income lost), `rent_up_pct` (household bills up), `one_off_costs`, `new_car_payment`, `loan_payment_reduction`, `everyday_cut_pct`.
+Shock names: `job_loss_ei` (EI income share as a percentage), `rent_up_pct` (household bills increase percentage), `pay_cut_pct` (income reduction percentage), `one_off_costs`, `new_car_payment`, `loan_payment_reduction`, `everyday_cut_pct`.
 
 ## Developing the frontend
 `cd frontend && npm install && npm run dev` starts it at http://127.0.0.1:5173. It talks to the API on port 8000; set this in `frontend/.env` with `VITE_API_BASE_URL=http://127.0.0.1:8000`.

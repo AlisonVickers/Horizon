@@ -19,6 +19,7 @@ from app.domain.runway import RunwayCalculator  # noqa: E402
 from app.services.cashflow_forecast import CashflowForecastService  # noqa: E402
 from app.services.expense_detector import ExpenseDetector  # noqa: E402
 from app.services.income_detector import IncomeDetector  # noqa: E402
+from app.services.scenario_service import ScenarioService  # noqa: E402
 
 FIXED_COLUMNS = ("household_bills", "insurance", "loan_payments")
 EVERYDAY_COLUMNS = ("cash_withdrawals_genuine", "card_withdrawals", "transfers_out_other")
@@ -61,6 +62,7 @@ class AdapterAccountService:
     def __init__(self, data_dir: str | Path) -> None:
         self.data_dir = Path(data_dir)
         self._budget_requests: dict[int, list[str]] = {}
+        self.scenario_service = ScenarioService()
 
     # ------------------------------------------------------------------ data
     @cached_property
@@ -388,26 +390,11 @@ class AdapterAccountService:
     def scenario(self, account_id: int, shocks: list[dict[str, float]]) -> dict[str, Any]:
         tables = self._load(account_id)
         profile = self.profile(tables)
-        income = profile["income"]
-        spending = profile["spending"]
         buffer = profile["buffer"]
-        one_off = 0.0
-        for shock in shocks:
-            name, value = shock["name"], shock["value"]
-            if name == "job_loss_ei":  # value = share of income lost
-                income *= max(0.0, 1.0 - value)
-            elif name == "rent_up_pct":  # household bills go up by value (fraction)
-                spending += profile["household_bills"] * value
-            elif name == "one_off_costs":
-                one_off += value
-            elif name == "loan_payment_reduction":
-                spending = max(0.0, spending - (profile["loan_payment"] if value <= 1 else value))
-            elif name == "new_car_payment":
-                spending += value
-            elif name == "everyday_cut_pct":
-                spending = max(0.0, spending - profile["everyday_spending"] * value)
-            else:
-                raise ValueError(f"Unsupported scenario shock: {name}")
+        adjusted = self.scenario_service.apply(profile, shocks)
+        income = adjusted["income"]
+        spending = adjusted["spending"]
+        one_off = adjusted["one_off_costs"]
         result = RunwayCalculator.calculate(max(buffer, 0.0), one_off, spending, income)
         timeline = self.timeline(tables["transactions"])
         return {

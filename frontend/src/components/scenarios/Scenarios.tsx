@@ -8,15 +8,15 @@ type ScenarioKey = 'job-loss' | 'rent-increase' | 'pay-cut' | 'new-car' | 'surpr
 type ScenarioOption = {
   key: ScenarioKey
   label: string
-  shocks: string[]
+  shock: string
 }
 
 const scenarioOptions: ScenarioOption[] = [
-  { key: 'job-loss', label: 'Lose my job', shocks: ['Job loss', 'EI income'] },
-  { key: 'rent-increase', label: 'Rent increases', shocks: ['Bills go up'] },
-  { key: 'pay-cut', label: 'Pay cut', shocks: ['Lower income'] },
-  { key: 'new-car', label: 'New car payment', shocks: ['New payment'] },
-  { key: 'surprise', label: 'Surprise expense', shocks: ['One-off cost'] },
+  { key: 'job-loss', label: 'Lose my job', shock: 'Job loss · EI income' },
+  { key: 'rent-increase', label: 'Rent increases', shock: 'Rent goes up' },
+  { key: 'pay-cut', label: 'Pay cut', shock: 'Lower income' },
+  { key: 'new-car', label: 'New car payment', shock: 'New payment' },
+  { key: 'surprise', label: 'Surprise expense', shock: 'One-off cost' },
 ]
 
 const currency = new Intl.NumberFormat('en-CA', {
@@ -31,15 +31,16 @@ const dateFormatter = new Intl.DateTimeFormat('en-CA', {
 })
 
 export function Scenarios() {
-  const [selectedScenario, setSelectedScenario] = useState<ScenarioKey>('job-loss')
+  const [selectedScenarios, setSelectedScenarios] = useState<ScenarioKey[]>(['job-loss'])
   const [eiShare, setEiShare] = useState(55)
-  const [billsIncrease, setBillsIncrease] = useState(15)
+  const [rentIncrease, setRentIncrease] = useState(15)
+  const [payCut, setPayCut] = useState(20)
+  const [carPayment, setCarPayment] = useState(250)
   const [oneOffCost, setOneOffCost] = useState(2_000)
   const [pausedLoan, setPausedLoan] = useState(false)
   const [cutEveryday, setCutEveryday] = useState(false)
   const [delayOneOff, setDelayOneOff] = useState(false)
 
-  const scenario = scenarioOptions.find(({ key }) => key === selectedScenario) ?? scenarioOptions[0]
   const [results, setResults] = useState<ScenarioResponse | null>(null)
   const [scenarioError, setScenarioError] = useState<string | null>(null)
 
@@ -48,22 +49,23 @@ export function Scenarios() {
     // Clear the previous request error before starting the new calculation.
     // eslint-disable-next-line react/set-state-in-effect
     setScenarioError(null)
-    const shocks = selectedScenario === 'rent-increase'
-      ? [{ name: 'rent_up_pct', value: billsIncrease / 100 }]
-      : selectedScenario === 'new-car'
-        ? [{ name: 'new_car_payment', value: 250 }]
-        : selectedScenario === 'surprise'
-          ? [{ name: 'one_off_costs', value: delayOneOff ? 0 : oneOffCost }]
-          : [
-              { name: 'job_loss_ei', value: 1 - eiShare / 100 },
-              ...(selectedScenario === 'job-loss' ? [{ name: 'rent_up_pct', value: billsIncrease / 100 }] : []),
-              ...(selectedScenario === 'job-loss' || selectedScenario === 'pay-cut'
-                ? [{ name: 'one_off_costs', value: delayOneOff ? 0 : oneOffCost }]
-                : []),
-            ]
+    const shocks = selectedScenarios.flatMap((selectedScenario) => {
+      switch (selectedScenario) {
+        case 'job-loss':
+          return [{ name: 'job_loss_ei', value: eiShare }]
+        case 'rent-increase':
+          return [{ name: 'rent_up_pct', value: rentIncrease }]
+        case 'pay-cut':
+          return [{ name: 'pay_cut_pct', value: payCut }]
+        case 'new-car':
+          return [{ name: 'new_car_payment', value: carPayment }]
+        case 'surprise':
+          return [{ name: 'one_off_costs', value: delayOneOff ? 0 : oneOffCost }]
+      }
+    })
     runScenario(ACCOUNT_ID, [
       ...shocks,
-      ...(pausedLoan && selectedScenario !== 'new-car'
+      ...(pausedLoan
         ? [{ name: 'loan_payment_reduction', value: 1 }]
         : []),
       ...(cutEveryday ? [{ name: 'everyday_cut_pct', value: 0.1 }] : []),
@@ -77,7 +79,7 @@ export function Scenarios() {
     return () => {
       active = false
     }
-  }, [billsIncrease, cutEveryday, delayOneOff, eiShare, oneOffCost, pausedLoan, selectedScenario])
+  }, [carPayment, cutEveryday, delayOneOff, eiShare, oneOffCost, pausedLoan, payCut, rentIncrease, selectedScenarios])
 
   return (
     <main className="dashboard-main scenarios-main">
@@ -93,9 +95,11 @@ export function Scenarios() {
       <div className="scenario-picker" role="tablist" aria-label="Scenario presets">
         {scenarioOptions.map((option) => (
           <button
-            className={selectedScenario === option.key ? 'is-selected' : ''}
+            className={selectedScenarios.includes(option.key) ? 'is-selected' : ''}
             key={option.key}
-            onClick={() => setSelectedScenario(option.key)}
+            onClick={() => setSelectedScenarios((selected) => selected.includes(option.key)
+              ? selected.filter((key) => key !== option.key)
+              : [...selected, option.key])}
             role="tab"
             type="button"
           >
@@ -111,37 +115,28 @@ export function Scenarios() {
             <h2>WHAT HAPPENS?</h2>
           </div>
           <div className="shock-pills">
-            {scenario.shocks.map((shock) => <span className="shock-pill" key={shock}>{shock}<b>×</b></span>)}
+            {selectedScenarios.map((key) => {
+              const scenario = scenarioOptions.find((option) => option.key === key)
+              return scenario && <span className="shock-pill" key={key}>{scenario.shock}<b>×</b></span>
+            })}
           </div>
 
           <div className="slider-list">
-            <SliderField
-              label="EI pays this share of income"
-              value={`${eiShare}%`}
-              min={0}
-              max={100}
-              step={1}
-              inputValue={eiShare}
-              onChange={setEiShare}
-            />
-            <SliderField
-              label="Household bills go up by"
-              value={`+${billsIncrease}%`}
-              min={0}
-              max={50}
-              step={1}
-              inputValue={billsIncrease}
-              onChange={setBillsIncrease}
-            />
-            <SliderField
-              label="Surprise expense (one-off)"
-              value={currency.format(oneOffCost)}
-              min={0}
-              max={5000}
-              step={100}
-              inputValue={oneOffCost}
-              onChange={setOneOffCost}
-            />
+            {selectedScenarios.includes('job-loss') && (
+              <SliderField label="EI pays this share of income" value={`${eiShare}%`} min={0} max={100} step={1} inputValue={eiShare} onChange={setEiShare} />
+            )}
+            {selectedScenarios.includes('rent-increase') && (
+              <SliderField label="Rent goes up by" value={`+${rentIncrease}%`} min={0} max={50} step={1} inputValue={rentIncrease} onChange={setRentIncrease} />
+            )}
+            {selectedScenarios.includes('pay-cut') && (
+              <SliderField label="Income is reduced by" value={`-${payCut}%`} min={0} max={100} step={1} inputValue={payCut} onChange={setPayCut} />
+            )}
+            {selectedScenarios.includes('new-car') && (
+              <SliderField label="New monthly car payment" value={currency.format(carPayment)} min={0} max={2000} step={50} inputValue={carPayment} onChange={setCarPayment} />
+            )}
+            {selectedScenarios.includes('surprise') && (
+              <SliderField label="Surprise expense (one-off)" value={currency.format(oneOffCost)} min={0} max={5000} step={100} inputValue={oneOffCost} onChange={setOneOffCost} />
+            )}
           </div>
           <p className="scenario-note"><span className="astro-icon" aria-hidden="true">✦</span> These sliders use your detected income, spending, and balance history.</p>
           {scenarioError && <p className="data-status data-error">{scenarioError}</p>}
