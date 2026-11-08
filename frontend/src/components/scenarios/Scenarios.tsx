@@ -1,3 +1,4 @@
+
 import { useEffect, useState } from 'react'
 import { runScenario } from '../../api/client'
 import type { ScenarioResponse } from '../../api/client'
@@ -43,15 +44,17 @@ export function Scenarios() {
 
   const [results, setResults] = useState<ScenarioResponse | null>(null)
   const [scenarioError, setScenarioError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     let active = true
     // eslint-disable-next-line react/set-state-in-effect
     setScenarioError(null)
+    setLoading(true)
     const shocks = selectedScenarios.flatMap((selectedScenario) => {
       switch (selectedScenario) {
         case 'job-loss':
-          return [{ name: 'job_loss_ei', value: 1 - eiShare / 100 }]
+          return [{ name: 'job_loss_ei', value: eiShare / 100 }]
         case 'rent-increase':
           return [{ name: 'rent_up_pct', value: rentIncrease / 100 }]
         case 'pay-cut':
@@ -62,7 +65,7 @@ export function Scenarios() {
           return [{ name: 'one_off_costs', value: delayOneOff ? 0 : oneOffCost }]
       }
     })
-    runScenario(ACCOUNT_ID, [
+    const timer = window.setTimeout(() => runScenario(ACCOUNT_ID, [
       ...shocks,
       ...(pausedLoan
         ? [{ name: 'loan_payment_reduction', value: 1 }]
@@ -70,13 +73,18 @@ export function Scenarios() {
       ...(cutEveryday ? [{ name: 'everyday_cut_pct', value: 0.1 }] : []),
     ])
       .then((response) => {
-        if (active) setResults(response)
+        if (active) { setResults(response); setLoading(false) }
       })
       .catch((error: unknown) => {
-        if (active) setScenarioError(error instanceof Error ? error.message : 'Unable to run scenario')
+        if (active) {
+          setScenarioError(error instanceof Error ? error.message : 'Unable to run scenario')
+          setLoading(false)
+        }
       })
+    , 180)
     return () => {
       active = false
+      window.clearTimeout(timer)
     }
   }, [carPayment, cutEveryday, delayOneOff, eiShare, oneOffCost, pausedLoan, payCut, rentIncrease, selectedScenarios])
 
@@ -138,6 +146,10 @@ export function Scenarios() {
             )}
           </div>
           <p className="scenario-note"><img className="astro-icon" src="/assets/astro-avatar.svg" alt="" aria-hidden="true" /> Based on your income, spending and balance history.</p>
+          {selectedScenarios.includes('rent-increase') && (
+            <p className="scenario-note">Rent changes only affect payments identified as rent in your transaction history. If none are detected, this scenario will not change the forecast.</p>
+          )}
+          {loading && <p className="muted-copy" role="status">Updating projection…</p>}
           {scenarioError && <p className="data-status data-error">{scenarioError}</p>}
         </section>
 
@@ -177,7 +189,7 @@ export function Scenarios() {
           <button className={`lever-button ${cutEveryday ? 'is-active' : ''}`} onClick={() => setCutEveryday((active) => !active)} type="button">
             <span>Cut everyday spending 10% <small>({currency.format((results?.profile.everyday_spending ?? 0) * 0.1)}/mo)</small></span><strong>{cutEveryday ? 'Applied' : 'Try it'}</strong>
           </button>
-          <button className={`lever-button ${delayOneOff ? 'is-active' : ''}`} onClick={() => setDelayOneOff((active) => !active)} type="button">
+          <button className={`lever-button ${delayOneOff ? 'is-active' : ''}`} onClick={() => setDelayOneOff((active) => !active)} disabled={!selectedScenarios.includes('surprise')} type="button">
             <span>Delay one-off expense <small>({currency.format(oneOffCost)})</small></span><strong>{delayOneOff ? 'Applied' : 'Try it'}</strong>
           </button>
         </div>
@@ -214,7 +226,7 @@ function SliderField({ label, value, min, max, step, inputValue, onChange }: Sli
         type="range"
         value={inputValue}
       />
-      <small><i>{min === 0 && max === 5000 ? '$0' : `${min}%`}</i><i>{max === 5000 ? '$5,000' : `${max}%`}</i></small>
+      <small><i>{max > 100 ? currency.format(min) : `${min}%`}</i><i>{max > 100 ? currency.format(max) : `${max}%`}</i></small>
     </label>
   )
 }

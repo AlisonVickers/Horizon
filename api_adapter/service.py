@@ -1098,6 +1098,7 @@ class AdapterAccountService:
         return message, details, trace
 
     def scenario(self, account_id: int, shocks: list[dict[str, float]]) -> dict[str, Any]:
+        """Simulate shocks using detected cashflow, or a labelled historical income assumption."""
         tables = self._load(account_id)
         profile = self.profile(tables)
         latest_month = str(
@@ -1126,6 +1127,13 @@ class AdapterAccountService:
             }
             for event in dashboard["events"]
         ]
+        has_detected_income = any(
+            event.get("event_type") == "income" and float(event["amount"]) > 0
+            for event in events
+        )
+        historical_income_assumption = (
+            0.0 if has_detected_income else max(float(profile["income"]), 0.0)
+        )
         simulated = self.scenario_simulator.simulate_shocks(
             starting_balance=dashboard["balance"]["historical_month_end_balance"],
             events=events,
@@ -1133,31 +1141,64 @@ class AdapterAccountService:
             end_date=end_date,
             monthly_variable_outflow=dashboard["variable_spending"]["conservative_monthly_estimate"],
             shocks=shocks,
+            monthly_income=historical_income_assumption,
         )
+        if simulated["status"] != "estimated":
+            raise ValueError(simulated.get("reason", "Scenario projection is unavailable"))
+
         months = max((end_date - start_date).days / 30.44, 1)
-        income = sum(
-            event["amount"] for event in simulated["scenario_events"]
-            if event["amount"] > 0
-        ) / months
-        spending = (
+        income = (
             sum(
-                -event["amount"] for event in simulated["scenario_events"]
-                if event["amount"] < 0
+                float(event["amount"])
+                for event in simulated["scenario_events"]
+                if event.get("event_type") == "income" and float(event["amount"]) > 0
             ) / months
-            + simulated["monthly_variable_outflow"]
+            + simulated["monthly_income"]
         )
-        buffer = dashboard["balance"]["historical_month_end_balance"]
-        one_off = simulated["one_off_costs"]
+        one_off = float(simulated["one_off_costs"])
+        # One-off costs are already represented in scenario_events. Exclude
+        # them from the recurring monthly spending rate and deduct only once
+        # through RunwayCalculator's one-off parameter.
+        recurring_expenses = sum(
+            -float(event["amount"])
+            for event in simulated["scenario_events"]
+            if float(event["amount"]) < 0
+            and event.get("category") != "one-off cost"
+        )
+        spending = max(
+            recurring_expenses / months + simulated["monthly_variable_outflow"],
+            0.0,
+        )
+        buffer = float(dashboard["balance"]["historical_month_end_balance"])
         result = RunwayCalculator.calculate(max(buffer, 0.0), one_off, spending, income)
         timeline = self.timeline(tables["transactions"])
         return {
-            "account_id": account_id, "current_date": timeline["current_date"],
-            "next_payday": timeline["next_payday"], "days_until_payday": timeline["days_until_payday"],
-            "runway_months": result.runway_months, "income_after": income,
-            "spending_after": spending, "loan_payment": profile["loan_payment"], "buffer": buffer,
-            "one_off_costs": one_off, "income_after_shock": income,
-            "spending_after_shock": spending, "gap": result.gap, "runway": result.runway_months,
+            "account_id": account_id,
+            "current_date": timeline["current_date"],
+            "next_payday": timeline["next_payday"],
+            "days_until_payday": timeline["days_until_payday"],
+            "runway_months": result.runway_months,
+            "income_after": income,
+            "spending_after": spending,
+            "loan_payment": profile["loan_payment"],
+            "buffer": buffer,
+            "one_off_costs": one_off,
+            "income_after_shock": income,
+            "spending_after_shock": spending,
+            "gap": result.gap,
+            "runway": result.runway_months,
             "profile": profile,
+            "income_source": (
+                "detected_recurring_income" if has_detected_income
+                else "historical_monthly_inflow_assumption"
+            ),
+            "income_is_estimate": not has_detected_income,
+            "limitations": (
+                "Historical monthly inflows are used as a hypothetical scenario "
+                "baseline, not verified salary or guaranteed future deposits."
+                if not has_detected_income else
+                "Detected recurring income is a forecast, not a guarantee."
+            ),
         }
 
     def assistant(self, account_id: int, prompt: str) -> dict[str, Any]:
@@ -1335,3 +1376,4 @@ class AdapterAccountService:
         except Exception as error:  # fall back to the engine's own answer
             print(f"[Astro] Gemini call failed: {error}", flush=True)
             return None, "error"
+

@@ -1,5 +1,5 @@
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
 
@@ -22,6 +22,7 @@ class SafeToSpendService:
         monthly_variable_outflow,
         safety_buffer=500,
         variable_status="estimated",
+        monthly_income=0,
     ):
         if end_date < start_date:
             raise ValueError("end_date must not precede start_date")
@@ -36,13 +37,18 @@ class SafeToSpendService:
         balance = self._money(starting_balance)
         buffer = self._money(safety_buffer)
         monthly_outflow = self._money(monthly_variable_outflow)
+        monthly_income_amount = self._money(monthly_income)
 
         if buffer < 0 or monthly_outflow < 0:
             raise ValueError("Amounts must not be negative")
 
+        if monthly_income_amount < 0:
+            raise ValueError("Monthly income cannot be negative")
+
         # Daily allocation is an approximation, not an observed
         # transaction schedule.
         daily_outflow = monthly_outflow / Decimal("30.44")
+        daily_income = monthly_income_amount / Decimal("30.44")
 
         # Events are dictionaries with date and signed amount.
         events_by_date = {}
@@ -61,15 +67,13 @@ class SafeToSpendService:
 
         lowest_balance = balance
         lowest_date = start_date
-
         current_date = start_date
-
-        from datetime import timedelta
 
         while current_date <= end_date:
             balance += events_by_date.get(
                 current_date, Decimal("0")
             )
+            balance += daily_income
             balance -= daily_outflow
 
             if balance < lowest_balance:

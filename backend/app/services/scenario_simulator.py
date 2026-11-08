@@ -1,4 +1,3 @@
-
 import calendar
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
@@ -159,24 +158,37 @@ class ScenarioSimulatorService:
         monthly_variable_outflow: float,
         shocks: list[dict],
         safety_buffer: float = 500.0,
+        monthly_income: float = 0.0,
     ) -> dict:
         """Apply the shock keys used by the adapter's scenario dashboard."""
         baseline_events = [dict(event) for event in events]
         simulated_events = [dict(event) for event in events]
         variable_outflow = monthly_variable_outflow
         one_off_costs = 0.0
+        baseline_monthly_income = float(monthly_income)
+        simulated_monthly_income = baseline_monthly_income
+        if baseline_monthly_income < 0:
+            raise ValueError("Monthly income cannot be negative")
 
         for shock in shocks:
             name = shock["name"]
             value = float(shock["value"])
+            if value < 0:
+                raise ValueError("Shock values cannot be negative")
 
             if name == "job_loss_ei":
                 share = value if value <= 1 else value / 100
+                if share > 1:
+                    raise ValueError("Income replacement share cannot exceed 100%")
+                simulated_monthly_income *= share
                 for event in simulated_events:
                     if event.get("event_type") == "income" and event["amount"] > 0:
                         event["amount"] = float(self._money(event["amount"] * share))
             elif name == "pay_cut_pct":
                 reduction = value if value <= 1 else value / 100
+                if reduction > 1:
+                    raise ValueError("Pay cut cannot exceed 100%")
+                simulated_monthly_income *= 1 - reduction
                 for event in simulated_events:
                     if event.get("event_type") == "income" and event["amount"] > 0:
                         event["amount"] = float(
@@ -240,6 +252,7 @@ class ScenarioSimulatorService:
             monthly_variable_outflow=monthly_variable_outflow,
             safety_buffer=safety_buffer,
             variable_status="estimated",
+            monthly_income=baseline_monthly_income,
         )
         simulated = self.safe_to_spend_service.calculate(
             starting_balance=starting_balance,
@@ -249,6 +262,7 @@ class ScenarioSimulatorService:
             monthly_variable_outflow=variable_outflow,
             safety_buffer=safety_buffer,
             variable_status="estimated",
+            monthly_income=simulated_monthly_income,
         )
         if baseline["status"] != "estimated" or simulated["status"] != "estimated":
             return {
@@ -269,6 +283,8 @@ class ScenarioSimulatorService:
             "scenario_events": simulated_events,
             "one_off_costs": one_off_costs,
             "monthly_variable_outflow": variable_outflow,
+            "monthly_income": simulated_monthly_income,
+            "baseline_monthly_income": baseline_monthly_income,
             "limitations": (
                 "This is a hypothetical scenario based on historical recurring cashflow "
                 "and estimated cash withdrawals. It is not a guarantee of affordability."
