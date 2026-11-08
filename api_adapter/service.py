@@ -154,6 +154,7 @@ class AdapterAccountService:
             next_payday = _add_month(next_payday)
         # Heena's income detector: if it finds a recurring income, use its forecast date.
         income_patterns = IncomeDetector().detect(transactions)
+        pay_period_frequency = income_patterns[0].frequency if income_patterns else "monthly"
         if income_patterns:
             forecast = CashflowForecastService().forecast(
                 income_patterns, [], current + timedelta(days=1), current + timedelta(days=62))
@@ -167,10 +168,29 @@ class AdapterAccountService:
         ]
         spent = float(debits["amount"].abs().sum())
         expected = float(credits.sort_values("date").iloc[-1]["amount"])
+        pay_period_days = []
+        for offset in range(period_length + 1):
+            day = payday + timedelta(days=offset)
+            day_transactions = transactions[transactions["date"].dt.date == day]
+            amount = float(day_transactions["signed_amount"].sum()) if not day_transactions.empty else 0.0
+            labels = []
+            if day == payday:
+                labels.append("Last payday")
+            if day == current:
+                labels.append("Today")
+            if day == next_payday:
+                labels.append("Next payday")
+            pay_period_days.append({
+                "date": day.isoformat(),
+                "label": " · ".join(labels),
+                "amount": amount,
+            })
         return {
             "current_date": current.isoformat(),
             "last_payday": payday.isoformat(),
             "next_payday": next_payday.isoformat(),
+            "pay_period_frequency": pay_period_frequency,
+            "pay_period_days": pay_period_days,
             "days_until_payday": max((next_payday - current).days, 0),
             "pay_period_day": max(min((current - payday).days + 1, period_length), 1),
             "pay_period_length": period_length,

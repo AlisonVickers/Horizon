@@ -29,6 +29,8 @@ export type HomeResponse = {
   current_date: string | null
   last_payday: string
   next_payday: string
+  pay_period_frequency: string
+  pay_period_days: Array<{ date: string; label: string; amount: number }>
   days_until_payday: number
   pay_period_day: number
   pay_period_length: number

@@ -36,13 +36,11 @@ export function NextPaydayCard({
     <article className="card payday-card">
       <div className="payday-heading">
         <div>
-          <p className="eyebrow eyebrow-light">Next payday</p>
-          <h2>{paydayDate}</h2>
+          <h2>Next payday is{paydayDate}</h2>
           <p className="payday-meta">
             {daysAway} days away <span>·</span> expected deposit {currency.format(expectedDeposit)}
           </p>
         </div>
-        <span className="calendar-mark" aria-hidden="true">▦</span>
       </div>
 
       <div className={`spending-progress ${isOver ? 'is-over' : ''}`} aria-label={`${currency.format(spent)} spent`}>

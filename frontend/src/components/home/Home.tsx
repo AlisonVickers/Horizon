@@ -26,6 +26,29 @@ function formatDate(value: string) {
 
 export function Home() {
   const { data, error, loading } = useAccountData<HomeResponse>(() => getHome(ACCOUNT_ID))
+  const calendarDays = data
+    ? (() => {
+        const start = new Date(`${data.last_payday}T00:00:00Z`)
+        const end = new Date(`${data.next_payday}T00:00:00Z`)
+        const currentDate = data.current_date
+          ? new Date(`${data.current_date}T00:00:00Z`).toISOString().slice(0, 10)
+          : null
+        const dayDetails = new Map(data.pay_period_days.map((day) => [day.date, day]))
+        const days: Array<{ date: string; label: string; amount: number }> = []
+
+        for (const date = new Date(start); date <= end; date.setUTCDate(date.getUTCDate() + 1)) {
+          const dateString = date.toISOString().slice(0, 10)
+          const existingDay = dayDetails.get(dateString)
+          let label = existingDay?.label ?? ''
+          if (dateString === currentDate) label = 'Today'
+          if (dateString === data.next_payday) label = 'Payday'
+          days.push({ date: dateString, label, amount: existingDay?.amount ?? 0 })
+        }
+
+        const paddingDays = (start.getUTCDay() + 6) % 7
+        return [...Array.from({ length: paddingDays }, () => null), ...days]
+      })()
+    : []
   const displayedExpenses = (data?.upcoming_expenses ?? []).slice(0, 3)
   const income = data?.expected_deposit ?? 0
   const spending = data?.spent_since_payday ?? 0
@@ -39,25 +62,6 @@ export function Home() {
         timeZone: 'UTC',
       }).format(new Date(`${data.current_date}T00:00:00Z`))
     : 'your latest banking date'
-  const currentDate = data?.current_date ? new Date(`${data.current_date}T00:00:00Z`) : null
-  const glanceMonth = currentDate
-    ? new Intl.DateTimeFormat('en-CA', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(currentDate)
-    : 'Pay period'
-  const calendarDays = currentDate
-    ? Array.from({ length: 14 }, (_, index) => {
-        const day = new Date(currentDate)
-        day.setUTCDate(day.getUTCDate() - ((currentDate.getUTCDay() + 6) % 7) + index)
-        const iso = day.toISOString().slice(0, 10)
-        return {
-          day: day.getUTCDate(),
-          label: iso === data?.current_date
-            ? 'Today'
-            : iso === data?.next_payday || iso === data?.last_payday
-              ? 'Payday'
-              : data?.upcoming_expenses.some((expense) => expense.due_date === iso) ? 'Bill' : '',
-        }
-      })
-    : []
   const [prompt, setPrompt] = useState('')
   const [assistantMessage, setAssistantMessage] = useState<string | null>(null)
   const [assistantError, setAssistantError] = useState<string | null>(null)
@@ -84,7 +88,6 @@ export function Home() {
     <main className="dashboard-main">
       <section className="welcome-row">
         <div>
-          <p className="eyebrow">Your money, at a glance</p>
           <h1>Hello! Today is {formattedCurrentDate}</h1>
           <p className="welcome-copy">
             Everything here is detected from your bank activity. There is nothing to enter.
@@ -153,17 +156,20 @@ export function Home() {
         <article className="card glance-card">
           <div className="card-heading">
             <div>
-              <p className="eyebrow">{glanceMonth}</p>
+              <p className="eyebrow">{data?.pay_period_frequency ?? 'Pay period'}</p>
               <h2>Pay period at a glance</h2>
             </div>
             <button className="icon-button" type="button" aria-label="Open calendar">↗</button>
           </div>
           <div className="mini-calendar">
             {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((day, index) => <span className="weekday" key={`${day}-${index}`}>{day}</span>)}
-            {calendarDays.map(({ day, label }, index) => (
-              <span className={`calendar-day ${label.toLowerCase()} ${index === 0 ? 'muted-day' : ''}`} key={`${day}-${index}`}>
-                <b>{day}</b>
-                {label && <small>{label}</small>}
+            {calendarDays.map((day, index) => day === null ? (
+              <span aria-hidden="true" key={`padding-${index}`} />
+            ) : (
+              <span className={`calendar-day ${day.label.toLowerCase()}`} key={day.date}>
+                <b>{new Date(`${day.date}T00:00:00Z`).getUTCDate()}</b>
+                {day.label && <small>{day.label}</small>}
+                {day.amount < 0 && <small>{currency.format(Math.abs(day.amount))}</small>}
               </span>
             ))}
           </div>
