@@ -16,11 +16,9 @@ export function useAccountData<T>(
     loading: true,
   })
 
-  // The caller supplies the dependency list because loaders are account/query-specific.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     let active = true
-    // Loading is reset whenever the caller's account/query dependencies change.
     // eslint-disable-next-line react/set-state-in-effect
     setState({ data: null, error: null, loading: true })
     loader()
@@ -39,8 +37,7 @@ export function useAccountData<T>(
     return () => {
       active = false
     }
-  // The dependency list is intentionally supplied by the hook caller.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, dependencies)
 
   return state

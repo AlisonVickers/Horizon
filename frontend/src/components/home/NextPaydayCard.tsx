@@ -38,7 +38,7 @@ export function NextPaydayCard({
         <div>
           <h2>Next payday is {paydayDate}</h2>
           <p className="payday-meta">
-            {daysAway} days away <span>·</span> expected deposit {currency.format(expectedDeposit)}
+            {daysAway} days away <span>·</span> last deposit {currency.format(expectedDeposit)}
           </p>
         </div>
       </div>

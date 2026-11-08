@@ -2,14 +2,14 @@ import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { ACCOUNT_ID, switchAccount } from '../../config'
 
-type Tab = 'Home' | 'Calendar' | 'Budget' | 'Scenarios'
+type Tab = 'Home' | 'Calendar' | 'Budget' | 'Scenarios' | 'Plans'
 
 type TopNavProps = {
   activeTab: Tab
   onTabChange: (tab: Tab) => void
 }
 
-const tabs: Tab[] = ['Home', 'Calendar', 'Budget', 'Scenarios']
+const tabs: Tab[] = ['Home', 'Calendar', 'Budget', 'Scenarios', 'Plans']
 
 export function TopNav({ activeTab, onTabChange }: TopNavProps) {
   const [accountInput, setAccountInput] = useState(String(ACCOUNT_ID))
@@ -23,7 +23,7 @@ export function TopNav({ activeTab, onTabChange }: TopNavProps) {
   return (
     <header className="top-nav">
       <a className="brand" href="/" onClick={(event) => event.preventDefault()}>
-        Horizon<span style={{ color: '#ff9a4a' }}>.</span>
+        <img src="/assets/horizon-logo-on-dark.svg" alt="Horizon" height={40} />
       </a>
       <nav aria-label="Primary navigation">
         {tabs.map((tab) => (

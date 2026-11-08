@@ -326,10 +326,34 @@ class AdapterAccountService:
         return sorted(output, key=lambda row: (row["due_date"] or "9999", -row["amount"]))
 
     # ------------------------------------------------------------- endpoints
+    @staticmethod
+    def _runway(profile: dict[str, float], *, income: float | None = None, spending: float | None = None) -> float:
+        result = RunwayCalculator.calculate(
+            max(profile["buffer"], 0.0),
+            0.0,
+            max(profile["spending"] if spending is None else spending, 0.0),
+            max(profile["income"] if income is None else income, 0.0),
+        )
+        return result.runway_months
+
+    @staticmethod
+    def _balance_history(summary: pd.DataFrame) -> list[dict[str, Any]]:
+        history = []
+        for _, row in summary.sort_values("month").tail(12).iterrows():
+            balance = row["month_end_balance"]
+            if pd.isna(balance):
+                continue
+            history.append({
+                "month": str(row["month"]),
+                "balance": float(balance),
+            })
+        return history
+
     def home(self, account_id: int) -> dict[str, Any]:
         tables = self._load(account_id)
         transactions = tables["transactions"].sort_values(["date", "transaction_id"], ascending=False)
-        summary = tables["monthly_summary"].sort_values("month").iloc[-1]
+        summary_table = tables["monthly_summary"].sort_values("month")
+        summary = summary_table.iloc[-1]
         timeline = self.timeline(tables["transactions"])
         current = date.fromisoformat(timeline["current_date"])
         next_payday = date.fromisoformat(timeline["next_payday"])
@@ -341,6 +365,8 @@ class AdapterAccountService:
             **timeline,
             "summary_month": str(summary["month"]),
             "balance": float(summary["month_end_balance"]),
+            "baseline_runway": self._runway(profile),
+            "balance_history": self._balance_history(summary_table),
             "profile": profile,
             "latest_month": {
                 "income": float(summary["money_in"]),
@@ -372,6 +398,68 @@ class AdapterAccountService:
                 }
                 for _, row in transactions.head(10).iterrows()
             ],
+        }
+
+    def plans(self, account_id: int) -> dict[str, Any]:
+        tables = self._load(account_id)
+        profile = self.profile(tables)
+        target = round(profile["spending"] * 6, -2)
+        current = max(profile["buffer"], 0.0)
+        remaining = max(target - current, 0.0)
+        monthly_saving = max(profile["income"] - profile["spending"], 0.0)
+        months_to_goal = remaining / monthly_saving if monthly_saving > 0 else None
+        goal_plan = {
+            "name": "6-month safety net",
+            "target": target,
+            "current": current,
+            "progress_pct": min(current / target * 100, 100) if target else 0.0,
+            "monthly_saving": monthly_saving,
+            "months_to_goal": months_to_goal,
+            "steps": [
+                "Keep essential bills and loan payments covered first.",
+                "Move the monthly saving amount to a separate safety buffer after payday.",
+                "Review the target whenever income or recurring spending changes.",
+            ],
+        }
+
+        baseline_runway = self._runway(profile, income=0.0)
+        everyday_cut = min(profile["everyday_spending"], profile["spending"] * 0.2)
+        fixed_cut = min(profile["fixed_costs"] * 0.1, profile["spending"])
+        actions = [
+            {
+                "title": "Pause everyday spending",
+                "detail": f"Temporarily remove about ${everyday_cut:,.0f}/month of cash and card spending.",
+                "spending": max(profile["spending"] - everyday_cut, 0.0),
+            },
+            {
+                "title": "Reduce fixed commitments",
+                "detail": f"Target about ${fixed_cut:,.0f}/month through payment relief or lower recurring costs.",
+                "spending": max(profile["spending"] - fixed_cut, 0.0),
+            },
+        ]
+        backup_actions = []
+        for action in actions:
+            action_runway = self._runway(profile, income=0.0, spending=action["spending"])
+            backup_actions.append({
+                "title": action["title"],
+                "detail": action["detail"],
+                "runway_months": action_runway,
+                "months_gained": max(action_runway - baseline_runway, 0.0),
+            })
+        backup_actions.sort(key=lambda action: action["months_gained"], reverse=True)
+        combined_spending = max(profile["spending"] - everyday_cut - fixed_cut, 0.0)
+        combined_runway = self._runway(profile, income=0.0, spending=combined_spending)
+
+        return {
+            "account_id": account_id,
+            "profile": profile,
+            "goal_plan": goal_plan,
+            "backup_plan": {
+                "trigger": "If income stopped today, your current buffer would cover essential spending for",
+                "runway_without_actions": baseline_runway,
+                "runway_with_top_actions": combined_runway,
+                "actions": backup_actions,
+            },
         }
 
     def calendar(self, account_id: int) -> dict[str, Any]:
