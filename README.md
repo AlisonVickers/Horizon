@@ -25,6 +25,16 @@
 | GET | /api/accounts/{id}/dashboard?start_date=&end_date=&safety_buffer= | Heena's projected balance and low-balance alerts (powers the Balance outlook card) |
 | POST | /accounts/{id}/assistant | `{prompt}` returns Astro's answer (engine numbers, explained by Gemini) |
 
+Astro can answer questions about income, spending, bills and budgets, and estimate
+the impact of a purchase with a stated price. If the price is missing, it asks
+you to submit the question again with the amount. Forecast dates such as "next
+month" are relative to the latest transaction date in the dataset, not the
+computer's current date; "next month" assumes its first day. Purchase projections
+use detected recurring income and expenses, exclude variable spending, and do
+not establish affordability. Gemini is optional; when unavailable, Astro uses
+the engine's supported answers and explicitly says when it cannot answer.
+The response's `data.gemini_status` and `tool_trace` show which steps were used.
+
 Shock names: `job_loss_ei` (EI income share as a percentage), `rent_up_pct` (household bills increase percentage), `pay_cut_pct` (income reduction percentage), `one_off_costs`, `new_car_payment`, `loan_payment_reduction`, `everyday_cut_pct`.
 
 ## Developing the frontend

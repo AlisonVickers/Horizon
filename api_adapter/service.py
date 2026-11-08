@@ -67,6 +67,7 @@ DATE_PATTERN = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+RELATIVE_DATE_PATTERN = re.compile(r"\b(?:next|this) month\b", re.IGNORECASE)
 
 
 class AccountNotFoundError(LookupError):
@@ -624,13 +625,19 @@ class AdapterAccountService:
     @staticmethod
     def _question_kind(prompt: str, amount: float | None, requested_date: date | None) -> str:
         text = prompt.lower()
-        if amount is not None and any(word in text for word in ("afford", "buy", "spend", "cost", "purchase")):
+        if re.search(r"\b(afford|buy|purchase|cost)\b", text) or (
+            amount is not None and re.search(r"\bspend\b", text)
+        ):
             return "purchase"
         if amount is not None and any(word in text for word in ("save", "saving", "set aside")):
             return "savings_target"
-        if requested_date is not None:
+        if requested_date is not None and re.search(
+            r"\b(balance|forecast|projection|projected|outlook)\b", text
+        ):
             return "forecast"
-        return "summary"
+        if re.search(r"\b(bills|fixed costs|expenses|spending|spend|income|earn|salary|buffer|savings|balance|summary|overview)\b", text):
+            return "summary"
+        return "other"
 
     @staticmethod
     def _is_budget_request(prompt: str) -> bool:
@@ -657,6 +664,10 @@ class AdapterAccountService:
 
     @staticmethod
     def _requested_date(prompt: str, current: date) -> date | None:
+        relative = RELATIVE_DATE_PATTERN.search(prompt)
+        if relative:
+            month = _add_month(current.replace(day=1)) if relative.group().lower() == "next month" else current
+            return month
         match = DATE_PATTERN.search(prompt)
         if not match:
             return None
@@ -686,15 +697,25 @@ class AdapterAccountService:
         details: dict[str, Any] = {
             "requested_amount": amount,
             "requested_date": requested_date.isoformat() if requested_date else None,
+            "data_as_of": current.isoformat(),
             "next_payday": timeline["next_payday"],
             "days_until_payday": timeline["days_until_payday"],
             "question_kind": question_kind,
         }
 
         if question_kind == "summary":
+            text = prompt.lower()
+            if re.search(r"\b(bills|fixed costs)\b", text):
+                message = f"Your typical fixed costs are ${profile['fixed_costs']:,.0f} per month, including household bills, insurance, and loan payments."
+            elif re.search(r"\b(spending|spend|expenses)\b", text):
+                message = f"You typically spend ${profile['spending']:,.0f} per month based on your account history."
+            elif re.search(r"\b(income|earn|salary)\b", text):
+                message = f"Your typical income is ${profile['income']:,.0f} per month based on your account history."
+            else:
+                message = ""
             gap = profile["spending"] - profile["income"]
             return (
-                f"You typically bring in ${profile['income']:,.0f} and spend "
+                message or f"You typically bring in ${profile['income']:,.0f} and spend "
                 f"${profile['spending']:,.0f} a month, with a ${profile['buffer']:,.0f} buffer."
                 + (
                     f" That is about ${gap:,.0f} more spending than income each month."
@@ -704,18 +725,35 @@ class AdapterAccountService:
                 trace,
             )
 
+        if question_kind == "other":
+            return (
+                "I can't answer that question from the available financial calculations. "
+                "Try asking about income, spending, a budget, or the cost of a planned purchase.",
+                details,
+                trace,
+            )
+
+        if question_kind == "purchase" and amount is None:
+            return (
+                "How much will the purchase or trip cost? Please include the amount and timing "
+                "in your question so I can estimate its impact.",
+                details,
+                trace,
+            )
+
         if requested_date is None:
             requested_date = date.fromisoformat(timeline["next_payday"])
-            details["requested_date"] = requested_date.isoformat()
-
-        if requested_date <= current:
-            requested_date = _add_month(current)
             details["requested_date"] = requested_date.isoformat()
 
         latest_month = str(tables["monthly_summary"].sort_values("month").iloc[-1]["month"])
         year, month = (int(part) for part in latest_month.split("-")[:2])
         balance_date = date(year, month, monthrange(year, month)[1])
         forecast_start = balance_date + timedelta(days=1)
+        if requested_date < forecast_start:
+            raise ValueError(
+                f"The requested date must be on or after {forecast_start.isoformat()}, "
+                "the start of the available forecast"
+            )
         dashboard = DashboardService().get_dashboard(
             account_id=account_id,
             start_date=forecast_start,
@@ -781,13 +819,15 @@ class AdapterAccountService:
         if question_kind == "forecast":
             message = (
                 f"By {self._display_date(requested_date)}, your recurring-income and recurring-expense "
-                f"projection is ${projected_balance:,.0f}. Your estimated runway is {runway.runway_months:,.1f} months."
+                f"projection is ${projected_balance:,.0f}, before variable spending. "
+                f"Your estimated runway is {runway.runway_months:,.1f} months."
             )
         elif question_kind == "purchase" and balance_after >= 0:
             message = (
                 f"A ${amount:,.0f} purchase on {self._display_date(requested_date)} would leave about "
                 f"${balance_after:,.0f} in the projected balance, before variable spending. "
-                f"Your estimated runway after it would be {runway.runway_months:,.1f} months."
+                f"Your estimated runway after it would be {runway.runway_months:,.1f} months. "
+                "This estimate does not establish whether the purchase is affordable."
             )
         elif question_kind == "purchase":
             message = (
@@ -797,15 +837,18 @@ class AdapterAccountService:
             )
         else:
             message = (
-                f"Saving ${amount:,.0f} by {self._display_date(requested_date)} would leave about "
-                f"${balance_after:,.0f} in the projected balance. Your estimated runway would be "
+                f"By {self._display_date(requested_date)}, the projected balance is about "
+                f"${balance_after:,.0f} before setting aside your ${amount:,.0f} savings target "
+                f"and before variable spending. Your estimated runway would be "
                 f"{runway.runway_months:,.1f} months."
             )
-        details["conclusion"] = (
-            "not_affordable" if question_kind == "purchase" and balance_after < 0
-            else "affordable" if question_kind == "purchase"
-            else "informational"
-        )
+        if RELATIVE_DATE_PATTERN.search(prompt):
+            message += (
+                f" The timing is based on your latest account data from "
+                f"{self._display_date(current)}"
+                + (" and assumes the first day of next month." if "next month" in prompt.lower() else ".")
+            )
+        details["conclusion"] = "informational"
         return message, details, trace
 
     def scenario(self, account_id: int, shocks: list[dict[str, float]]) -> dict[str, Any]:
@@ -907,9 +950,12 @@ class AdapterAccountService:
                 account_id, prompt, tables, profile
             )
         calculation_data.setdefault("conclusion", "budget_created" if is_budget_request else "informational")
-        ai_message, gemini_status = self._ask_gemini(
-            prompt, profile, message, calculation_data
-        )
+        if calculation_data.get("question_kind") == "purchase" and calculation_data["requested_amount"] is None:
+            ai_message, gemini_status = None, "not_needed"
+        else:
+            ai_message, gemini_status = self._ask_gemini(
+                prompt, profile, message, calculation_data
+            )
         if ai_message:
             message, trace = ai_message, trace + ["gemini"]
         else:
@@ -980,13 +1026,18 @@ class AdapterAccountService:
         if not key:
             return None, "disabled"
         model = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
+        if model != "gemini-3.5-flash":
+            print(f"[Astro] Unsupported GEMINI_MODEL {model}; using gemini-3.5-flash", flush=True)
+            model = "gemini-3.5-flash"
+        fallback_model = "gemini-3.1-flash"
         instructions = (
             "You are Astro, a friendly Canadian banking assistant in the Horizon app. "
             "Return JSON with exactly two fields: answer (a 2-3 sentence string) and conclusion. "
             "Use the supplied conclusion exactly. Use ONLY the numbers in the account profile, engine answer, "
             "and verified calculation details; "
             "never invent figures or change the engine's conclusion. Explain the specific customer question "
-            "using the verified calculation details. Amounts are CAD unless explicitly stated otherwise."
+            "using the verified calculation details. Preserve the engine's limitations, assumptions and dates. "
+            "Amounts are CAD unless explicitly stated otherwise."
         )
         body = {
             "systemInstruction": {"parts": [{"text": instructions}]},
@@ -999,23 +1050,35 @@ class AdapterAccountService:
         }
         try:
             import httpx
-            response = httpx.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-                headers={"x-goog-api-key": key, "Content-Type": "application/json"},
-                json=body, timeout=20,
-            )
-            if response.status_code != 200:
-                print(f"[Astro] Gemini error {response.status_code}: {response.text[:300]}", flush=True)
-                return None, "error"
-            parts = response.json()["candidates"][0]["content"]["parts"]
-            text = "".join(part.get("text", "") for part in parts).strip()
-            validated_answer = cls._valid_gemini_text(
-                text, profile, engine_answer, calculation_data
-            )
-            if not validated_answer:
-                print("[Astro] Gemini response failed validation", flush=True)
-                return None, "rejected"
-            return validated_answer, "used"
+            models = [model]
+            if fallback_model != model:
+                models.append(fallback_model)
+            for index, candidate_model in enumerate(models):
+                response = httpx.post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/{candidate_model}:generateContent",
+                    headers={"x-goog-api-key": key, "Content-Type": "application/json"},
+                    json=body, timeout=20,
+                )
+                if response.status_code == 200:
+                    parts = response.json()["candidates"][0]["content"]["parts"]
+                    text = "".join(part.get("text", "") for part in parts).strip()
+                    validated_answer = cls._valid_gemini_text(
+                        text, profile, engine_answer, calculation_data
+                    )
+                    if not validated_answer:
+                        print("[Astro] Gemini response failed validation", flush=True)
+                        return None, "rejected"
+                    return validated_answer, "used"
+                transient = response.status_code == 429 or response.status_code >= 500
+                if not transient or index == len(models) - 1:
+                    print(f"[Astro] Gemini error {response.status_code}: {response.text[:300]}", flush=True)
+                    return None, "error"
+                print(
+                    f"[Astro] Gemini model {candidate_model} returned {response.status_code}; "
+                    f"trying {models[index + 1]}",
+                    flush=True,
+                )
+            return None, "error"
         except Exception as error:  # fall back to the engine's own answer
             print(f"[Astro] Gemini call failed: {error}", flush=True)
             return None, "error"

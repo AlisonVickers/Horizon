@@ -137,7 +137,7 @@ export function Scenarios() {
               <SliderField label="Surprise expense (one-off)" value={currency.format(oneOffCost)} min={0} max={5000} step={100} inputValue={oneOffCost} onChange={setOneOffCost} />
             )}
           </div>
-          <p className="scenario-note"><span className="astro-icon" aria-hidden="true">✦</span> Based on your income, spending and balance history.</p>
+          <p className="scenario-note"><img className="astro-icon" src="/assets/astro-avatar.svg" alt="" aria-hidden="true" /> Based on your income, spending and balance history.</p>
           {scenarioError && <p className="data-status data-error">{scenarioError}</p>}
         </section>
 
@@ -182,7 +182,7 @@ export function Scenarios() {
           </button>
         </div>
         <div className="insight-box lever-insight">
-          <span className="astro-icon" aria-hidden="true">✦</span>
+          <img className="astro-icon" src="/assets/astro-avatar.svg" alt="" aria-hidden="true" />
           <p>{pausedLoan || cutEveryday || delayOneOff
             ? 'The figures above include the selected changes.'
             : 'Select an option to see how much longer your money would last.'}</p>

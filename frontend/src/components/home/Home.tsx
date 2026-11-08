@@ -94,19 +94,21 @@ export function Home() {
             Here's where your money stands today.
           </p>
         </div>
-        <form className="chat-input" onSubmit={submitPrompt}>
-          <img className="astro-avatar" src="/assets/astro-avatar.svg" alt="" aria-hidden="true" />
-          <input
-            aria-label="Ask Astro anything"
-            onChange={(event) => setPrompt(event.target.value)}
-            placeholder="Ask Astro anything... e.g. Can I afford a $400 trip in December?"
-            value={prompt}
-          />
-          <button className="send-arrow" disabled={assistantLoading} type="submit" aria-label="Send question">↗</button>
-        </form>
-        {assistantLoading && <p className="data-status">Astro is thinking…</p>}
-        {assistantMessage && <p className="assistant-reply"><span className="astro-icon" aria-hidden="true">✦</span>{assistantMessage}</p>}
-        {assistantError && <p className="data-status data-error">Astro could not answer right now. {assistantError}</p>}
+        <div className="assistant-column">
+          <form className="chat-input" onSubmit={submitPrompt}>
+            <img className="astro-avatar" src="/assets/astro-avatar.svg" alt="" aria-hidden="true" />
+            <input
+              aria-label="Ask Astro anything"
+              onChange={(event) => setPrompt(event.target.value)}
+              placeholder="Ask Astro anything... e.g. Can I afford a $400 trip in December?"
+              value={prompt}
+            />
+            <button className="send-arrow" disabled={assistantLoading} type="submit" aria-label="Send question">↗</button>
+          </form>
+          {assistantLoading && <p className="data-status">Astro is thinking…</p>}
+          {assistantMessage && <p className="assistant-reply"><img className="astro-icon" src="/assets/astro-avatar.svg" alt="" aria-hidden="true" />{assistantMessage}</p>}
+          {assistantError && <p className="data-status data-error">Astro could not answer right now. {assistantError}</p>}
+        </div>
         {loading && <p className="data-status">Loading your account…</p>}
         {error && <p className="data-status data-error">Showing the latest saved view. {error}</p>}
       </section>
@@ -146,7 +148,7 @@ export function Home() {
             ))}
           </div>
           <div className="insight-box expense-insight">
-            <span className="astro-icon" aria-hidden="true">✦</span>
+            <img className="astro-icon" src="/assets/astro-avatar.svg" alt="" aria-hidden="true" />
             <p><strong>{currency.format(data?.due_before_payday ?? 0)}</strong> due before payday</p>
             <span className={`status-badge ${(data?.balance ?? 0) >= (data?.due_before_payday ?? 0) ? '' : 'watch'}`}>
               {(data?.balance ?? 0) >= (data?.due_before_payday ?? 0) ? 'Covered' : 'At risk'}
@@ -191,13 +193,13 @@ export function Home() {
               <div className="goal-progress"><i style={{ width: `${data.savings_goal.progress_pct}%` }} /></div>
               <p className="muted-copy">{Math.round(data.savings_goal.progress_pct)}% there · suggested by Astro</p>
               <div className="insight-box">
-                <span className="astro-icon" aria-hidden="true">✦</span>
+                <img className="astro-icon" src="/assets/astro-avatar.svg" alt="" aria-hidden="true" />
                 <p>{data.savings_goal.rationale}</p>
               </div>
             </>
           ) : (
             <div className="insight-box">
-              <span className="astro-icon" aria-hidden="true">✦</span>
+              <img className="astro-icon" src="/assets/astro-avatar.svg" alt="" aria-hidden="true" />
               <p>Ask Astro to help you set a savings goal.</p>
             </div>
           )}

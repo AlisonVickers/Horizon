@@ -147,7 +147,7 @@ function OutlookCard({ month, label }: { month: Months[number] | undefined; labe
         </div>
       </div>
       <div className="insight-box outlook-insight">
-        <span className="astro-icon" aria-hidden="true">✦</span>
+        <img className="astro-icon" src="/assets/astro-avatar.svg" alt="" aria-hidden="true" />
         <p>
           Your everyday spending this month was <strong>{Math.abs(diff)}% {diff >= 0 ? 'above' : 'below'}</strong> the
           typical customer in the dataset.
@@ -216,7 +216,7 @@ function YearView({ months }: { months: Months }) {
         </div>
         {best && worst && (
           <div className="insight-box year-insight">
-            <span className="astro-icon" aria-hidden="true">✦</span>
+            <img className="astro-icon" src="/assets/astro-avatar.svg" alt="" aria-hidden="true" />
             <p>
               You saved the most in <strong>{monthName.format(toDate(`${best.month}-01`))}</strong> ({currency.format(best.saved)}).
               {worst.saved < 0 && <> Your toughest month was <strong>{monthName.format(toDate(`${worst.month}-01`))}</strong>, when you drew {currency.format(Math.abs(worst.saved))} from savings.</>}
