@@ -1,30 +1,18 @@
-cd /Users/alisonvickers/Code/Horizon-final
+To start Horizon on macOS, double-click start-horizon.command in this folder.
 
-if [ ! -x ".venv/bin/python" ]; then
-  echo "Creating Python environment - first run only..."
-  python3 -m venv .venv
-fi
+Alternatively, open Terminal, change to this project folder, and run:
 
-source .venv/bin/activate
+  bash start-horizon.command
 
-python -m pip install -q --disable-pip-version-check -r requirements.txt
+The first run creates the Python environment and installs the required packages.
+The launcher checks that the frontend build exists, opens Horizon in your browser,
+and runs the local server. Press Control-C in Terminal to stop it.
 
-if [ ! -f "frontend/dist/index.html" ]; then
-  echo "frontend/dist is missing."
-  exit 1
-fi
+If the launcher reports that frontend/dist is missing, build the frontend from
+Terminal with:
 
-PORT=8000
-if lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
-  PORT=8001
-fi
+  cd frontend
+  npm install
+  npm run build
 
-(sleep 8; open "http://127.0.0.1:$PORT") &
-
-echo
-echo "Horizon is running at http://127.0.0.1:$PORT"
-echo "Press Control-C to stop"
-
-python -m uvicorn api_adapter.main:app \
-  --host 127.0.0.1 \
-  --port "$PORT"
+Then run start-horizon.command again from the project folder.
