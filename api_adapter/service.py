@@ -17,9 +17,10 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.domain.runway import RunwayCalculator  # noqa: E402
 from app.services.cashflow_forecast import CashflowForecastService  # noqa: E402
-from app.services.expense_detector import ExpenseDetector  # noqa: E402
-from app.services.income_detector import IncomeDetector  # noqa: E402
-from app.services.scenario_service import ScenarioService  # noqa: E402
+from app.services.dashboard_service import DashboardService # noqa: E402
+from app.services.expense_detector import ExpenseDetector # noqa: E402
+from app.services.income_detector import IncomeDetector # noqa: E402
+from app.services.scenario_simulator import ScenarioSimulatorService # noqa: E402
 
 FIXED_COLUMNS = ("household_bills", "insurance", "loan_payments")
 EVERYDAY_COLUMNS = ("cash_withdrawals_genuine", "card_withdrawals", "transfers_out_other")
@@ -62,7 +63,7 @@ class AdapterAccountService:
     def __init__(self, data_dir: str | Path) -> None:
         self.data_dir = Path(data_dir)
         self._budget_requests: dict[int, list[str]] = {}
-        self.scenario_service = ScenarioService()
+        self.scenario_simulator = ScenarioSimulatorService()
 
     # ------------------------------------------------------------------ data
     @cached_property
@@ -390,11 +391,54 @@ class AdapterAccountService:
     def scenario(self, account_id: int, shocks: list[dict[str, float]]) -> dict[str, Any]:
         tables = self._load(account_id)
         profile = self.profile(tables)
-        buffer = profile["buffer"]
-        adjusted = self.scenario_service.apply(profile, shocks)
-        income = adjusted["income"]
-        spending = adjusted["spending"]
-        one_off = adjusted["one_off_costs"]
+        latest_month = str(
+            tables["monthly_summary"].sort_values("month").iloc[-1]["month"]
+        )
+        year, month = (int(part) for part in latest_month.split("-")[:2])
+        start_date = date(year, month, monthrange(year, month)[1]) + timedelta(days=1)
+        end_date = _add_month(start_date, 3) - timedelta(days=1)
+        dashboard = DashboardService().get_dashboard(
+            account_id=account_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        if (
+            dashboard["projected_balance"] is None
+            or dashboard["variable_spending"]["status"] != "estimated"
+        ):
+            raise ValueError("Scenario projection is unavailable for this account")
+
+        events = [
+            {
+                "date": event["date"],
+                "amount": event["amount"],
+                "event_type": event["event_type"],
+                "category": event["category"],
+            }
+            for event in dashboard["events"]
+        ]
+        simulated = self.scenario_simulator.simulate_shocks(
+            starting_balance=dashboard["balance"]["historical_month_end_balance"],
+            events=events,
+            start_date=start_date,
+            end_date=end_date,
+            monthly_variable_outflow=dashboard["variable_spending"]["conservative_monthly_estimate"],
+            shocks=shocks,
+        )
+        months = max((end_date - start_date).days / 30.44, 1)
+        income = sum(
+            event["amount"] for event in simulated["scenario_events"]
+            if event["amount"] > 0
+        ) / months
+        spending = (
+            sum(
+                -event["amount"] for event in simulated["scenario_events"]
+                if event["amount"] < 0
+            ) / months
+            + simulated["monthly_variable_outflow"]
+        )
+        buffer = dashboard["balance"]["historical_month_end_balance"]
+        one_off = simulated["one_off_costs"]
         result = RunwayCalculator.calculate(max(buffer, 0.0), one_off, spending, income)
         timeline = self.timeline(tables["transactions"])
         return {

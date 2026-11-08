@@ -7,8 +7,11 @@ from app.data.account_store import AccountStore
 from app.services.income_detector import IncomeDetector
 from app.services.expense_detector import ExpenseDetector
 from app.services.cashflow_forecast import CashflowForecastService
-from app.services.dashboard_service import DashboardService
 
+from app.services.multi_month_forecast import MultiMonthForecastService
+from pydantic import BaseModel, Field
+from app.services.scenario_simulator import ScenarioSimulatorService
+from app.services.dashboard_service import DashboardService
 
 app = FastAPI(
     title="Horizon API",
@@ -157,3 +160,128 @@ def get_account_dashboard(
             status_code=503,
             detail="Financial dataset unavailable",
         ) from exc
+
+@app.get("/api/accounts/{account_id}/calendar")
+def get_cashflow_calendar(
+    account_id: int,
+    start_date: date,
+    end_date: date,
+    safety_buffer: float = Query(
+        default=500.0,
+        ge=0,
+        le=1_000_000,
+        allow_inf_nan=False,
+    ),
+):
+    if end_date < start_date:
+        raise HTTPException(
+            status_code=400,
+            detail="End date cannot precede start date",
+        )
+
+    service = MultiMonthForecastService()
+
+    return service.forecast(
+        account_id=account_id,
+        start_date=start_date,
+        end_date=end_date,
+        safety_buffer=safety_buffer,
+    )
+
+class ScenarioRequest(BaseModel):
+    start_date: date
+    end_date: date
+    scenario_type: str
+    amount: float = Field(default=0, ge=0, allow_inf_nan=False)
+    scenario_date: date | None = None
+    income_reduction_percent: float = Field(
+        default=0,
+        ge=0,
+        le=100,
+        allow_inf_nan=False,
+    )
+    safety_buffer: float = Field(
+        default=500,
+        ge=0,
+        le=1_000_000,
+        allow_inf_nan=False,
+    )
+
+
+@app.post("/api/accounts/{account_id}/simulate")
+def simulate_financial_scenario(
+    account_id: int,
+    request: ScenarioRequest,
+):
+    if request.end_date < request.start_date:
+        raise HTTPException(
+            status_code=400,
+            detail="End date cannot precede start date",
+        )
+
+    if request.scenario_type not in (
+        "one_time_expense",
+        "income_reduction",
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported scenario type",
+        )
+
+    if request.scenario_type == "one_time_expense":
+        if (
+            request.scenario_date is None
+            or not (
+                request.start_date
+                <= request.scenario_date
+                <= request.end_date
+            )
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Scenario date must be within the forecast period",
+            )
+
+    dashboard = DashboardService().get_dashboard(
+        account_id=account_id,
+        start_date=request.start_date,
+        end_date=request.end_date,
+        safety_buffer=request.safety_buffer,
+    )
+
+    if (
+        dashboard["projected_balance"] is None
+        or dashboard["variable_spending"]["status"] != "estimated"
+    ):
+        return {
+            "status": "unavailable",
+            "reason": "No anchored balance or reliable spending estimate",
+        }
+
+    events = [
+        {
+            "date": event["date"],
+            "amount": event["amount"],
+            "event_type": event["event_type"],
+        }
+        for event in dashboard["events"]
+    ]
+
+    simulator = ScenarioSimulatorService()
+
+    return simulator.simulate(
+        starting_balance=dashboard["balance"][
+            "historical_month_end_balance"
+        ],
+        events=events,
+        start_date=request.start_date,
+        end_date=request.end_date,
+        monthly_variable_outflow=dashboard[
+            "variable_spending"
+        ]["conservative_monthly_estimate"],
+        safety_buffer=request.safety_buffer,
+        scenario_type=request.scenario_type,
+        amount=request.amount,
+        scenario_date=request.scenario_date,
+        income_reduction_percent=request.income_reduction_percent,
+    )
