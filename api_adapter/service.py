@@ -6,6 +6,7 @@ from functools import cached_property
 import json
 import os
 from pathlib import Path
+import re
 import sys
 from typing import Any
 
@@ -16,10 +17,11 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.domain.runway import RunwayCalculator  # noqa: E402
-from app.services.cashflow_forecast import CashflowForecastService  # noqa: E402
+from app.services.cashflow_forecast import CashflowEvent, CashflowForecastService  # noqa: E402
 from app.services.dashboard_service import DashboardService # noqa: E402
 from app.services.expense_detector import ExpenseDetector # noqa: E402
 from app.services.income_detector import IncomeDetector # noqa: E402
+from app.services.projected_balance import ProjectedBalanceService # noqa: E402
 from app.services.scenario_simulator import ScenarioSimulatorService # noqa: E402
 
 FIXED_COLUMNS = ("household_bills", "insurance", "loan_payments")
@@ -33,6 +35,38 @@ CATEGORY_LABELS = {
     "card_withdrawals": "Card purchases",
     "transfers_out_other": "Other transfers out",
 }
+MONTH_NAMES = {name.lower(): number for number, name in enumerate(
+    ("", "January", "February", "March", "April", "May", "June",
+     "July", "August", "September", "October", "November", "December")
+) if name}
+AMOUNT_PATTERN = re.compile(
+    r"(?<![\w.])(?:\$|cad\s*)?(\d[\d,]*(?:\.\d{1,2})?)(?![\w.])",
+    re.IGNORECASE,
+)
+WORD_AMOUNT_PATTERN = re.compile(
+    r"\b(one|two|three|four|five|six|seven|eight|nine|ten|"
+    r"eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|"
+    r"eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|"
+    r"eighty|ninety|hundred|thousand)\s+(?:dollars?|bucks?)\b",
+    re.IGNORECASE,
+)
+WORD_AMOUNTS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+    "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
+    "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
+    "nineteen": 19, "twenty": 20, "thirty": 30, "forty": 40,
+    "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80,
+    "ninety": 90, "hundred": 100, "thousand": 1000,
+}
+DATE_PATTERN = re.compile(
+    r"\b("
+    r"(?:20\d{2}-\d{1,2}-\d{1,2})|"
+    r"(?:january|february|march|april|may|june|july|august|"
+    r"september|october|november|december)(?:\s+20\d{2})?"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 class AccountNotFoundError(LookupError):
@@ -62,8 +96,67 @@ class AdapterAccountService:
 
     def __init__(self, data_dir: str | Path) -> None:
         self.data_dir = Path(data_dir)
-        self._budget_requests: dict[int, list[str]] = {}
+        self.state_path = self.data_dir.parent / "astro_state.json"
+        self._budget_requests, self._budget_preferences = self._load_state()
         self.scenario_simulator = ScenarioSimulatorService()
+
+    def _load_state(self) -> tuple[dict[int, list[str]], dict[int, dict[str, Any]]]:
+        if not self.state_path.exists():
+            return {}, {}
+        try:
+            raw = json.loads(self.state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            print(f"[Astro] Could not load persistent state: {error}", flush=True)
+            return {}, {}
+        if not isinstance(raw, dict):
+            raise ValueError("Astro state must be a JSON object")
+        # Migrate the original account_id -> prompt-list format.
+        if "requests" not in raw:
+            requests_raw, preferences_raw = raw, {}
+        else:
+            requests_raw = raw.get("requests", {})
+            preferences_raw = raw.get("preferences", {})
+        if not isinstance(requests_raw, dict) or not isinstance(preferences_raw, dict):
+            raise ValueError("Astro state requests and preferences must be JSON objects")
+        state = {}
+        for account_id, prompts in requests_raw.items():
+            try:
+                parsed_account_id = int(account_id)
+            except (TypeError, ValueError) as error:
+                raise ValueError(f"Astro state has an invalid account ID: {account_id}") from error
+            if not isinstance(prompts, list):
+                raise ValueError(f"Astro state for account {account_id} must be a list")
+            state[parsed_account_id] = [str(prompt) for prompt in prompts]
+        preferences = {}
+        for account_id, preference in preferences_raw.items():
+            try:
+                parsed_account_id = int(account_id)
+            except (TypeError, ValueError) as error:
+                raise ValueError(f"Astro preferences have an invalid account ID: {account_id}") from error
+            if not isinstance(preference, dict):
+                raise ValueError(f"Astro preference for account {account_id} must be an object")
+            preferences[parsed_account_id] = preference
+        return state, preferences
+
+    def _save_state(self) -> None:
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        serialized = {
+            "requests": {
+                str(account_id): prompts
+                for account_id, prompts in self._budget_requests.items()
+            },
+            "preferences": {
+                str(account_id): preference
+                for account_id, preference in self._budget_preferences.items()
+            },
+        }
+        temporary_path = self.state_path.with_suffix(".tmp")
+        try:
+            temporary_path.write_text(json.dumps(serialized, indent=2), encoding="utf-8")
+            temporary_path.replace(self.state_path)
+        except OSError as error:
+            print(f"[Astro] Could not save persistent state: {error}", flush=True)
+            raise ValueError("Astro could not save the budget state") from error
 
     # ------------------------------------------------------------------ data
     @cached_property
@@ -337,7 +430,11 @@ class AdapterAccountService:
             "peer_everyday_median": peer_everyday,
         }
 
-    def _budget_plan(self, tables: dict[str, pd.DataFrame]) -> list[dict[str, Any]]:
+    def _budget_plan(
+        self,
+        account_id: int,
+        tables: dict[str, pd.DataFrame],
+    ) -> list[dict[str, Any]]:
         profile = self.profile(tables)
         latest = tables["monthly_summary"].sort_values("month").iloc[-1]
         everyday_now = float(sum(latest[column] for column in EVERYDAY_COLUMNS))
@@ -347,7 +444,7 @@ class AdapterAccountService:
         # Half of what is left after bills; if nothing is left, a starter goal of 5% of income.
         save_target = max(round(max(leftover, 0) * 0.5, -1), round(profile["income"] * 0.05, -1))
         saved_now = max(float(latest["money_in"] - latest["money_out"]), 0.0)
-        return [
+        plan = [
             {
                 "name": "Everyday spending",
                 "monthly_savings": everyday_now,
@@ -371,6 +468,27 @@ class AdapterAccountService:
                 ),
             },
         ]
+        preference = self._budget_preferences.get(account_id)
+        if preference and preference.get("amount") is not None:
+            amount = float(preference["amount"])
+            cadence = str(preference.get("cadence", "month"))
+            periods_per_month = {
+                "week": 52 / 12,
+                "biweekly": 26 / 12,
+                "month": 1,
+                "paycheck": 1,
+            }.get(cadence, 1)
+            monthly_target = amount * periods_per_month
+            plan.append({
+                "name": f"Requested savings ({cadence})",
+                "monthly_savings": 0.0,
+                "monthly_limit": monthly_target,
+                "rationale": (
+                    f"Your requested target is ${amount:,.0f} per {cadence}. "
+                    f"That is approximately ${monthly_target:,.0f} per month."
+                ),
+            })
+        return plan
 
     def budgets(self, account_id: int) -> dict[str, Any]:
         tables = self._load(account_id)
@@ -385,8 +503,222 @@ class AdapterAccountService:
                 {"name": CATEGORY_LABELS[name], "amount": float(summary[name])}
                 for name in CATEGORY_LABELS if float(summary[name]) > 0
             ],
-            "goals": self._budget_plan(tables) if self._budget_requests.get(account_id) else [],
+            "goals": self._budget_plan(account_id, tables) if self._budget_requests.get(account_id) else [],
         }
+
+    @staticmethod
+    def _requested_amount(prompt: str) -> float | None:
+        without_dates = DATE_PATTERN.sub("", prompt)
+        word_match = WORD_AMOUNT_PATTERN.search(without_dates)
+        if word_match:
+            words = word_match.group(0).lower().replace(" dollars", "").replace(" dollar", "")
+            words = words.replace(" bucks", "").replace(" buck", "").split()
+            total = 0
+            current = 0
+            for word in words:
+                value = WORD_AMOUNTS[word]
+                if value in (100, 1000):
+                    current = max(current, 1) * value
+                    total += current
+                    current = 0
+                else:
+                    current += value
+            return float(total + current)
+        for match in AMOUNT_PATTERN.finditer(without_dates):
+            value = float(match.group(1).replace(",", ""))
+            prefix = without_dates[max(0, match.start() - 4):match.start()].lower()
+            is_currency = "$" in prefix or "cad" in prefix
+            if not is_currency and 1900 <= value <= 2099:
+                continue
+            return value
+        return None
+
+    @staticmethod
+    def _question_kind(prompt: str, amount: float | None, requested_date: date | None) -> str:
+        text = prompt.lower()
+        if amount is not None and any(word in text for word in ("afford", "buy", "spend", "cost", "purchase")):
+            return "purchase"
+        if amount is not None and any(word in text for word in ("save", "saving", "set aside")):
+            return "savings_target"
+        if requested_date is not None:
+            return "forecast"
+        return "summary"
+
+    @staticmethod
+    def _is_budget_request(prompt: str) -> bool:
+        text = prompt.lower()
+        return (
+            "budget" in text
+            or bool(re.search(r"\b(create|make|build|set up|setup)\b.{0,30}\b(plan|budget)\b", text))
+        )
+
+    @staticmethod
+    def _budget_cadence(prompt: str) -> str:
+        text = prompt.lower()
+        if "biweekly" in text or "every two weeks" in text:
+            return "biweekly"
+        if "weekly" in text or "per week" in text:
+            return "week"
+        if "per paycheck" in text or "each paycheck" in text or "every paycheck" in text:
+            return "paycheck"
+        return "month"
+
+    @staticmethod
+    def _display_date(value: date) -> str:
+        return value.strftime("%B ") + str(value.day) + value.strftime(", %Y")
+
+    @staticmethod
+    def _requested_date(prompt: str, current: date) -> date | None:
+        match = DATE_PATTERN.search(prompt)
+        if not match:
+            return None
+        value = match.group(1).lower()
+        if re.fullmatch(r"20\d{2}-\d{1,2}-\d{1,2}", value):
+            return date.fromisoformat(value)
+        parts = value.split()
+        month = MONTH_NAMES[parts[0]]
+        year = int(parts[1]) if len(parts) == 2 else current.year
+        if len(parts) == 1 and month <= current.month:
+            year += 1
+        return date(year, month, 1)
+
+    def _question_calculation(
+        self,
+        account_id: int,
+        prompt: str,
+        tables: dict[str, pd.DataFrame],
+        profile: dict[str, float],
+    ) -> tuple[str, dict[str, Any], list[str]]:
+        amount = self._requested_amount(prompt)
+        timeline = self.timeline(tables["transactions"])
+        current = date.fromisoformat(timeline["current_date"])
+        requested_date = self._requested_date(prompt, current)
+        question_kind = self._question_kind(prompt, amount, requested_date)
+        trace = ["account_profile", "income_detector", "expense_detector", "payday_calculator"]
+        details: dict[str, Any] = {
+            "requested_amount": amount,
+            "requested_date": requested_date.isoformat() if requested_date else None,
+            "next_payday": timeline["next_payday"],
+            "days_until_payday": timeline["days_until_payday"],
+            "question_kind": question_kind,
+        }
+
+        if question_kind == "summary":
+            gap = profile["spending"] - profile["income"]
+            return (
+                f"You typically bring in ${profile['income']:,.0f} and spend "
+                f"${profile['spending']:,.0f} a month, with a ${profile['buffer']:,.0f} buffer."
+                + (
+                    f" That is about ${gap:,.0f} more spending than income each month."
+                    if gap > 0 else " You usually have money left over."
+                ),
+                details,
+                trace,
+            )
+
+        if requested_date is None:
+            requested_date = date.fromisoformat(timeline["next_payday"])
+            details["requested_date"] = requested_date.isoformat()
+
+        if requested_date <= current:
+            requested_date = _add_month(current)
+            details["requested_date"] = requested_date.isoformat()
+
+        latest_month = str(tables["monthly_summary"].sort_values("month").iloc[-1]["month"])
+        year, month = (int(part) for part in latest_month.split("-")[:2])
+        balance_date = date(year, month, monthrange(year, month)[1])
+        forecast_start = balance_date + timedelta(days=1)
+        dashboard = DashboardService().get_dashboard(
+            account_id=account_id,
+            start_date=forecast_start,
+            end_date=requested_date,
+        )
+        trace.append("balance_projection")
+        projection = dashboard["projected_balance"]
+        if projection is None:
+            raise ValueError("A future balance projection is unavailable for this account")
+
+        planned_cost = amount if question_kind == "purchase" else 0.0
+        projection_events = [
+            CashflowEvent(
+                date=date.fromisoformat(event["date"]),
+                category=event["category"],
+                amount=float(event["amount"]),
+                event_type=event["event_type"],
+                source_key=f"forecast:{index}",
+            )
+            for index, event in enumerate(dashboard["events"])
+        ]
+        base_projection = ProjectedBalanceService().project(
+            starting_balance=dashboard["balance"]["historical_month_end_balance"],
+            events=projection_events,
+        )
+        projected_balance_before = base_projection["projected_ending_balance"]
+        if planned_cost:
+            projection_events.append(CashflowEvent(
+                date=requested_date,
+                category="Astro one-off purchase",
+                amount=-planned_cost,
+                event_type="one_off_expense",
+                source_key="astro_one_off_purchase",
+            ))
+        projection = ProjectedBalanceService().project(
+            starting_balance=dashboard["balance"]["historical_month_end_balance"],
+            events=projection_events,
+        )
+        projected_balance = projection["projected_ending_balance"]
+        balance_after = projected_balance
+        details["projection_scope"] = (
+            "detected_recurring_events_plus_requested_purchase"
+            if planned_cost else "detected_recurring_events_only"
+        )
+        details.update({
+            "projected_balance_before_purchase": projected_balance_before,
+            "projected_balance_after_purchase": balance_after,
+            "safe_to_spend": dashboard["safe_to_spend"],
+            "payday_spending": dashboard["payday_spending"],
+        })
+        if dashboard["payday_spending"]["status"] == "estimated":
+            trace.append("payday_spending")
+
+        runway = RunwayCalculator.calculate(
+            max(projected_balance, 0.0),
+            0.0,
+            profile["spending"],
+            profile["income"],
+        )
+        details["runway_after_purchase_months"] = runway.runway_months
+        trace.append("runway_calculator")
+
+        if question_kind == "forecast":
+            message = (
+                f"By {self._display_date(requested_date)}, your recurring-income and recurring-expense "
+                f"projection is ${projected_balance:,.0f}. Your estimated runway is {runway.runway_months:,.1f} months."
+            )
+        elif question_kind == "purchase" and balance_after >= 0:
+            message = (
+                f"A ${amount:,.0f} purchase on {self._display_date(requested_date)} would leave about "
+                f"${balance_after:,.0f} in the projected balance, before variable spending. "
+                f"Your estimated runway after it would be {runway.runway_months:,.1f} months."
+            )
+        elif question_kind == "purchase":
+            message = (
+                f"A ${amount:,.0f} purchase on {self._display_date(requested_date)} would put the projected "
+                f"balance about ${abs(balance_after):,.0f} below zero before variable spending. "
+                f"Your estimated runway after it would be {runway.runway_months:,.1f} months."
+            )
+        else:
+            message = (
+                f"Saving ${amount:,.0f} by {self._display_date(requested_date)} would leave about "
+                f"${balance_after:,.0f} in the projected balance. Your estimated runway would be "
+                f"{runway.runway_months:,.1f} months."
+            )
+        details["conclusion"] = (
+            "not_affordable" if question_kind == "purchase" and balance_after < 0
+            else "affordable" if question_kind == "purchase"
+            else "informational"
+        )
+        return message, details, trace
 
     def scenario(self, account_id: int, shocks: list[dict[str, float]]) -> dict[str, Any]:
         tables = self._load(account_id)
@@ -454,50 +786,127 @@ class AdapterAccountService:
     def assistant(self, account_id: int, prompt: str) -> dict[str, Any]:
         tables = self._load(account_id)
         profile = self.profile(tables)
-        text = prompt.lower()
-        if any(word in text for word in ("budget", "save", "saving", "plan")):
+        is_budget_request = self._is_budget_request(prompt)
+        if is_budget_request:
             self._budget_requests.setdefault(account_id, []).append(prompt)
-            plan = self._budget_plan(tables)
+            amount = self._requested_amount(prompt)
+            self._budget_preferences[account_id] = {
+                "amount": amount,
+                "cadence": self._budget_cadence(prompt),
+            }
+            self._save_state()
+            plan = self._budget_plan(account_id, tables)
+            requested_goal = plan[-1] if amount is not None else None
+            savings_target = (
+                f"${requested_goal['monthly_limit']:,.0f}/month"
+                if requested_goal
+                else f"${plan[2]['monthly_limit']:,.0f}/month"
+            )
             message = (
                 f"Done. I built a plan from your activity: keep everyday spending under "
-                f"${plan[0]['monthly_limit']:,.0f}/month and aim to save ${plan[2]['monthly_limit']:,.0f}/month. "
+                f"${plan[0]['monthly_limit']:,.0f}/month and aim to save "
+                f"{savings_target}. "
                 "See it on the Budget tab."
             )
+            calculation_data = {
+                "budget_plan": plan,
+                "requested_savings_amount": amount,
+                "requested_savings_cadence": self._budget_cadence(prompt),
+            }
+            trace = ["account_profile", "budget_planner"]
         else:
-            gap = profile["spending"] - profile["income"]
-            message = (
-                f"You typically bring in ${profile['income']:,.0f} and spend ${profile['spending']:,.0f} a month, "
-                f"with a ${profile['buffer']:,.0f} buffer. "
-                + (f"You run about ${gap:,.0f} short each month, so watch big withdrawals."
-                   if gap > 0 else "You usually have money left over, which is a good sign.")
+            message, calculation_data, trace = self._question_calculation(
+                account_id, prompt, tables, profile
             )
-        trace = ["account_profile", "budget_planner"]
-        ai_message = self._ask_gemini(prompt, profile, message)
+        calculation_data.setdefault("conclusion", "budget_created" if is_budget_request else "informational")
+        ai_message, gemini_status = self._ask_gemini(
+            prompt, profile, message, calculation_data
+        )
         if ai_message:
             message, trace = ai_message, trace + ["gemini"]
+        else:
+            trace.append(f"gemini_{gemini_status}")
         return {
             "message": message,
-            "data": {"account_id": account_id, "prompt": prompt, **profile},
+            "data": {
+                "account_id": account_id,
+                "prompt": prompt,
+                "gemini_status": gemini_status,
+                **profile,
+                **calculation_data,
+            },
             "tool_trace": trace,
         }
 
     @staticmethod
-    def _ask_gemini(prompt: str, profile: dict[str, float], engine_answer: str) -> str | None:
-        """Astro's voice via Gemini. Numbers come only from the engine; Gemini just explains them."""
+    def _numeric_values(value: str) -> set[float]:
+        return {
+            float(match.replace(",", ""))
+            for match in re.findall(r"(?<![\w.])\d[\d,]*(?:\.\d+)?", value)
+        }
+
+    @classmethod
+    def _valid_gemini_text(
+        cls,
+        text: str,
+        profile: dict[str, float],
+        engine_answer: str,
+        calculation_data: dict[str, Any],
+    ) -> str | None:
+        try:
+            response = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+        if (
+            not isinstance(response, dict)
+            or set(response) != {"answer", "conclusion"}
+            or not isinstance(response.get("answer"), str)
+        ):
+            return None
+        answer = response["answer"].strip()
+        if not answer or len(answer) > 1000 or any(
+            ord(char) < 32 and char not in "\n\t" for char in answer
+        ):
+            return None
+        if response.get("conclusion") != calculation_data.get("conclusion"):
+            return None
+        allowed = cls._numeric_values(
+            engine_answer
+            + json.dumps(profile)
+            + json.dumps(calculation_data, default=str)
+        )
+        if not cls._numeric_values(answer).issubset(allowed):
+            return None
+        return answer
+
+    @classmethod
+    def _ask_gemini(
+        cls,
+        prompt: str,
+        profile: dict[str, float],
+        engine_answer: str,
+        calculation_data: dict[str, Any],
+    ) -> tuple[str | None, str]:
+        """Astro's voice via Gemini; all financial facts come from the engine."""
         key = os.environ.get("GEMINI_API_KEY")
         if not key:
-            return None
+            return None, "disabled"
         model = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
         instructions = (
             "You are Astro, a friendly Canadian banking assistant in the Horizon app. "
-            "Answer in 2-3 short sentences. Use ONLY the numbers in the account profile and engine answer; "
-            "never invent figures. Amounts are CAD per month. Not financial advice."
+            "Return JSON with exactly two fields: answer (a 2-3 sentence string) and conclusion. "
+            "Use the supplied conclusion exactly. Use ONLY the numbers in the account profile, engine answer, "
+            "and verified calculation details; "
+            "never invent figures or change the engine's conclusion. Explain the specific customer question "
+            "using the verified calculation details. Amounts are CAD unless explicitly stated otherwise."
         )
         body = {
             "systemInstruction": {"parts": [{"text": instructions}]},
+            "generationConfig": {"responseMimeType": "application/json"},
             "contents": [{"role": "user", "parts": [{"text": (
                 f"Account profile: {json.dumps({k: round(v, 2) for k, v in profile.items()})}\n"
                 f"Engine answer: {engine_answer}\nCustomer question: {prompt}"
+                f"\nCalculation details: {json.dumps(calculation_data, default=str)}"
             )}]}],
         }
         try:
@@ -509,10 +918,16 @@ class AdapterAccountService:
             )
             if response.status_code != 200:
                 print(f"[Astro] Gemini error {response.status_code}: {response.text[:300]}", flush=True)
-                return None
+                return None, "error"
             parts = response.json()["candidates"][0]["content"]["parts"]
             text = "".join(part.get("text", "") for part in parts).strip()
-            return text or None
+            validated_answer = cls._valid_gemini_text(
+                text, profile, engine_answer, calculation_data
+            )
+            if not validated_answer:
+                print("[Astro] Gemini response failed validation", flush=True)
+                return None, "rejected"
+            return validated_answer, "used"
         except Exception as error:  # fall back to the engine's own answer
             print(f"[Astro] Gemini call failed: {error}", flush=True)
-            return None
+            return None, "error"
